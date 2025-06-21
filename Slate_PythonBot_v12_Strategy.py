@@ -1,81 +1,74 @@
-import time
 import requests
 import pandas as pd
 import ta
+import time
 from datetime import datetime
 from pytz import timezone
+import krakenex
 
 # === CONFIG ===
-PAIR = "BTC/USDT"
+PAIR = "XXBTZUSD"  # Kraken symbol for BTC/USDT
 BUY_RSI = 43
 SELL_RSI = 73
-TIMEFRAME = "4h"
-BOT_NAME = "SlateKrakenAuto"
+TIMEFRAME_MIN = 240  # 4h = 240 min
+QUOTE_VOLUME = 100  # $100 worth of BTC per order
 THRESHOLD_DELAY = 60 * 60  # 1 hour between signals
-WEBHOOK_URL = "https://api.3commas.io/public/api/v2/webhook/YOUR_WEBHOOK_KEY"  # <-- Replace this
+API_KEY_FILE = 'kraken.key'  # contains your Kraken keys
 
-# === STATE TRACKING ===
-last_signal_time = 0
-position = None
+# === STATE ===
+last_signal_time = None
+position = None  # "long" or None
 
+# === LOAD API KEYS ===
+api = krakenex.API()
+api.load_key(API_KEY_FILE)
+
+# === FETCH OHLCV DATA ===
 def fetch_ohlcv():
     url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": "XBTUSDT", "interval": 240}
+    params = {"pair": "XBTUSDT", "interval": TIMEFRAME_MIN}
     response = requests.get(url, params=params)
-    data = response.json()
-
-    ohlcv_data = None
-    for key in data['result']:
-        if key != 'last':
-            ohlcv_data = data['result'][key]
-            break
-
-    df = pd.DataFrame(ohlcv_data, columns=[
+    result = response.json()['result']
+    pair_key = list(result.keys())[0]  # 'XBTUSDT' or 'XXBTZUSD'
+    ohlcv = result[pair_key]
+    df = pd.DataFrame(ohlcv, columns=[
         'timestamp', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
     ])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-    df.set_index('timestamp', inplace=True)
-    df['close'] = df['close'].astype(float)
+    df['close'] = pd.to_numeric(df['close'])
     return df
 
-def calculate_rsi(df):
-    rsi = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
-    df['rsi'] = rsi
-    return df
+# === CALCULATE RSI ===
+def get_rsi(df, period=14):
+    rsi_series = ta.momentum.RSIIndicator(df['close'], window=period).rsi()
+    return rsi_series.iloc[-1]
 
-def send_signal(action):
-    payload = {"action": action}
-    try:
-        response = requests.post(WEBHOOK_URL, json=payload)
-        print(f"[{datetime.now()}] Sent {action.upper()} signal → {response.status_code}: {response.text}")
-    except Exception as e:
-        print(f"[{datetime.now()}] ERROR sending signal: {e}")
+# === PLACE ORDER ===
+def place_order(order_type='buy', volume='0.001'):
+    response = api.query_private('AddOrder', {
+        'pair': PAIR,
+        'type': order_type,
+        'ordertype': 'market',
+        'volume': volume
+    })
+    print(f"[{order_type.upper()} ORDER] Kraken response:", response)
+    return response
 
-def run_strategy():
+# === MAIN LOOP ===
+def main_loop():
     global last_signal_time, position
-    try:
-        df = fetch_ohlcv()
-        df = calculate_rsi(df)
-        rsi = df['rsi'].iloc[-1]
-        now = time.time()
-
-        print(f"[{datetime.now(timezone('US/Eastern'))}] RSI: {rsi:.2f} | Position: {position}")
-
-        if rsi <= BUY_RSI and position != 'long' and (now - last_signal_time > THRESHOLD_DELAY):
-            send_signal("buy")
-            position = 'long'
-            last_signal_time = now
-
-        elif rsi >= SELL_RSI and position == 'long' and (now - last_signal_time > THRESHOLD_DELAY):
-            send_signal("sell")
-            position = None
-            last_signal_time = now
-
-    except Exception as e:
-        print(f"[{datetime.now()}] Strategy error: {e}")
-
-# === RENDER ENTRYPOINT ===
-if __name__ == "__main__":
     while True:
-        run_strategy()
-        time.sleep(300)  # Wait 5 minutes before next check
+        try:
+            now = time.time()
+            if last_signal_time and (now - last_signal_time < THRESHOLD_DELAY):
+                print("Waiting before sending another signal...")
+                time.sleep(60)
+                continue
+
+            df = fetch_ohlcv()
+            rsi = get_rsi(df)
+
+            print(f"[{datetime.now(timezone('US/Eastern'))}] RSI: {rsi:.2f}, Position: {position}")
+
+            if rsi <= BUY_RSI and position != "long":
+                btc_price = df['close'].iloc[-1]
+                btc_amount = round(QUOTE_VOLUME / btc_price, 6)
