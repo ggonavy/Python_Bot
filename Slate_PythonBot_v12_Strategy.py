@@ -91,4 +91,4 @@ def run_bot():
         for level, pct in BUY_LADDERS:
             if rsi <= level and usd_balance > 5:
                 amount_usd = usd_balance * pct
-                price = float(fetch_ohlcv()['close'].iloc
+                price = float(fetch_ohlcv()['close'].iloc[-1])
