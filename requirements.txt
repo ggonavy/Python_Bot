@@ -4,3 +4,4 @@ pandas
 ta
 pytz
 krakenex
+pykrakenapi
