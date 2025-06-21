@@ -1,58 +1,65 @@
-from flask import Flask, request, jsonify
-import ccxt
+import time
+import requests
 import pandas as pd
+import ta
+from datetime import datetime
+from pytz import timezone
 
-app = Flask(__name__)
+# === CONFIG ===
+PAIR = "BTC/USDT"
+BUY_RSI = 43
+SELL_RSI = 73
+TIMEFRAME = "4h"
+BOT_NAME = "SlateKrakenAuto"
+THRESHOLD_DELAY = 60 * 60  # 1 hour between signals
+WEBHOOK_URL = "https://api.3commas.io/public/api/v2/webhook/YOUR_WEBHOOK_KEY"
 
-# === Kraken API Setup ===
-kraken = ccxt.kraken({
-    'apiKey': 'YOUR_KRAKEN_API_KEY',
-    'secret': 'YOUR_KRAKEN_API_SECRET',
-})
-symbol = 'BTC/USD'
-timeframe = '2h'  # Use 2-hour timeframe
+last_signal_time = None
+position = None
 
-# === RSI Parameters ===
-buy_rsi = 43
-sell_rsi = 73
-rsi_period = 14
+def fetch_ohlcv():
+    url = "https://api.kraken.com/0/public/OHLC"
+    params = {"pair": "XBTUSDT", "interval": 240}  # 240min = 4h
+    response = requests.get(url, params=params)
+    data = response.json()
 
-def get_rsi(df, period):
-    delta = df['close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def fetch_latest_data():
-    ohlcv = kraken.fetch_ohlcv(symbol, timeframe)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['rsi'] = get_rsi(df, rsi_period)
+    ohlcv = data['result']['XBTUSDT']
+    df = pd.DataFrame(ohlcv, columns=[
+        'timestamp', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
+    ])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+    df.set_index('timestamp', inplace=True)
+    df['close'] = df['close'].astype(float)
     return df
 
-@app.route('/signal', methods=['POST'])
-def signal_handler():
-    df = fetch_latest_data()
-    current_rsi = df['rsi'].iloc[-1]
+def calculate_rsi(df):
+    rsi = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+    df['rsi'] = rsi
+    return df
 
-    if current_rsi < buy_rsi:
-        action = 'buy'
-        print(f'RSI {current_rsi:.2f} < {buy_rsi} → BUY SIGNAL')
-    elif current_rsi > sell_rsi:
-        action = 'sell'
-        print(f'RSI {current_rsi:.2f} > {sell_rsi} → SELL SIGNAL')
-    else:
-        action = 'hold'
-        print(f'RSI {current_rsi:.2f} → HOLD')
+def send_signal(action):
+    payload = {"action": action}
+    response = requests.post(WEBHOOK_URL, json=payload)
+    print(f"[{datetime.now()}] Sent {action.upper()} signal → {response.status_code}: {response.text}")
 
-    return jsonify({
-        'status': 'ok',
-        'rsi': current_rsi,
-        'action': action
-    })
+def run_strategy():
+    global last_signal_time, position
+    df = fetch_ohlcv()
+    df = calculate_rsi(df)
+    rsi = df['rsi'].iloc[-1]
+    now = time.time()
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    print(f"[{datetime.now(timezone('US/Eastern'))}] RSI: {rsi:.2f} | Position: {position}")
+
+    if rsi <= BUY_RSI and position != 'long' and (not last_signal_time or now - last_signal_time > THRESHOLD_DELAY):
+        send_signal("buy")
+        position = 'long'
+        last_signal_time = now
+
+    elif rsi >= SELL_RSI and position == 'long' and (not last_signal_time or now - last_signal_time > THRESHOLD_DELAY):
+        send_signal("sell")
+        position = None
+        last_signal_time = now
+
+if __name__ == "__main__":
+    run_strategy()
