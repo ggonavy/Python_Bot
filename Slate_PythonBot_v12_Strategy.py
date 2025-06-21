@@ -9,8 +9,8 @@ import base64
 import urllib.parse
 
 # === CONFIG ===
-API_KEY = 'YOUR_KRAKEN_API_KEY'
-API_SECRET = 'YOUR_KRAKEN_API_SECRET'
+API_KEY = 'haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM'
+API_SECRET = 'MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=='
 PAIR = 'XBTUSDT'
 TIMEFRAME_MINUTES = 60
 BASE_URL = 'https://api.kraken.com'
