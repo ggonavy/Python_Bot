@@ -1,89 +1,148 @@
 import time
 import requests
-import pandas as pd
-import ta
+import hmac
+import hashlib
+import base64
+import urllib.parse
+import os
+import json
 from datetime import datetime
 from pytz import timezone
+import pandas as pd
+import ta
 
-# === CONFIG ===
+# === 🔐 KRAKEN API CONFIG ===
+KRAKEN_API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
+KRAKEN_API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
+
+# === ⚙️ BOT CONFIG ===
 PAIR = "XBTUSDT"
-TIMEFRAME = 60  # 1h
-BASE_TRADE_BALANCE = 500  # Only $500 for trading test
-THRESHOLD_DELAY = 60 * 60  # 1 hour between actions
+TRADE_VOLUME = 500  # Adjust this to your USD allocation per full cycle
+RSI_TIMEFRAME = 240  # 4h = 240 minutes
+THROTTLE_DELAY = 60 * 60  # 1 hour between signals
+CYCLE_STATE_FILE = "cycle_state.json"
 
-BUY_LEVELS = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 0.40)]
-SELL_LEVELS = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 0.40)]
+SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 
-last_signal_time = None
-buy_stack = []
-total_bought = 0.0
+last_trade_time = 0
 
+
+# === 📜 UTILITIES ===
 def log(msg):
     now = datetime.now(timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{now}] {msg}")
 
-def fetch_ohlcv():
-    url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": PAIR, "interval": TIMEFRAME}
+
+def load_state():
+    if os.path.exists(CYCLE_STATE_FILE):
+        with open(CYCLE_STATE_FILE, 'r') as f:
+            return json.load(f)
+    return {"sold_out": False}
+
+
+def save_state(state):
+    with open(CYCLE_STATE_FILE, 'w') as f:
+        json.dump(state, f)
+
+
+def sign_request(urlpath, data, secret, nonce):
+    postdata = urllib.parse.urlencode(data)
+    encoded = (str(nonce) + postdata).encode()
+    message = urlpath.encode() + hashlib.sha256(encoded).digest()
+
+    mac = hmac.new(base64.b64decode(secret), message, hashlib.sha512)
+    sig_digest = base64.b64encode(mac.digest())
+    return sig_digest.decode()
+
+
+def kraken_request(uri_path, data):
+    url = "https://api.kraken.com" + uri_path
+    data['nonce'] = str(int(1000 * time.time()))
+    headers = {
+        'API-Key': KRAKEN_API_KEY,
+        'API-Sign': sign_request(uri_path, data, KRAKEN_API_SECRET, data['nonce'])
+    }
+    response = requests.post(url, headers=headers, data=data)
+    return response.json()
+
+
+def get_ohlcv():
+    url = f"https://api.kraken.com/0/public/OHLC"
+    params = {"pair": PAIR, "interval": RSI_TIMEFRAME}
     response = requests.get(url, params=params)
     data = response.json()
-    candles = data['result'][PAIR]
-    df = pd.DataFrame(candles, columns=[
-        'timestamp', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
-    ])
+    ohlcv_key = list(data['result'].keys())[0]
+    df = pd.DataFrame(data['result'][ohlcv_key], columns=[
+        'time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'])
     df['close'] = df['close'].astype(float)
     return df
 
-def get_rsi(df, length=14):
-    rsi = ta.momentum.RSIIndicator(close=df['close'], window=length)
-    return rsi.rsi().iloc[-1]
 
-def place_order(side, usd_amount):
-    log(f"MOCK ORDER: {side.upper()} ${usd_amount:.2f}")
-    # Replace with real Kraken API trade logic
+def get_rsi(df):
+    df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
+    return df['rsi'].iloc[-1]
 
-def main():
-    global last_signal_time, total_bought, buy_stack
 
-    while True:
-        try:
-            now = time.time()
-            if last_signal_time and now - last_signal_time < THRESHOLD_DELAY:
-                log("Waiting due to signal delay window...")
-                time.sleep(60)
-                continue
+def execute_trade(side, volume):
+    pair = "XBT/USDT"
+    type = "buy" if side == "buy" else "sell"
+    order = {
+        "pair": pair,
+        "type": type,
+        "ordertype": "market",
+        "volume": volume
+    }
+    result = kraken_request('/0/private/AddOrder', order)
+    log(f"🔁 Executed {side.upper()} order: {result}")
+    return result
 
-            df = fetch_ohlcv()
-            rsi = get_rsi(df)
-            log(f"RSI: {rsi:.2f}")
 
-            # BUY ladder logic
-            for level, pct in BUY_LEVELS:
-                if rsi <= level and level not in [b[0] for b in buy_stack]:
-                    usd_to_buy = BASE_TRADE_BALANCE * pct
-                    place_order("buy", usd_to_buy)
-                    buy_stack.append((level, usd_to_buy))
-                    total_bought += usd_to_buy
-                    last_signal_time = now
-                    break
-
-            # SELL ladder logic
-            for level, pct in SELL_LEVELS:
-                if rsi >= level and total_bought > 0:
-                    usd_to_sell = total_bought * pct
-                    place_order("sell", usd_to_sell)
-                    total_bought -= usd_to_sell
-                    last_signal_time = now
-                    if total_bought <= 10:
-                        buy_stack = []
-                        total_bought = 0.0
-                    break
-
-            time.sleep(300)
-
-        except Exception as e:
-            log(f"Error: {e}")
+# === 🤖 MAIN BOT LOOP ===
+while True:
+    try:
+        current_time = time.time()
+        if current_time - last_trade_time < THROTTLE_DELAY:
             time.sleep(60)
+            continue
 
-if __name__ == "__main__":
-    main()
+        df = get_ohlcv()
+        rsi = get_rsi(df)
+        state = load_state()
+        log(f"RSI: {rsi:.2f} | Cycle sold out: {state['sold_out']}")
+
+        # === BUY LOGIC ===
+        if not state['sold_out']:
+            for level, pct in BUY_LADDER:
+                if rsi <= level:
+                    amount = TRADE_VOLUME * pct
+                    log(f"🟢 RSI {rsi:.2f} <= {level} → BUY ${amount}")
+                    execute_trade("buy", round(amount / df['close'].iloc[-1], 6))
+                    last_trade_time = current_time
+                    break
+            if rsi < 27:
+                log("⛔ RSI < 27 — bot halts buys, wait for manual DCA")
+        
+        # === SELL LOGIC ===
+        if state['sold_out'] is False:
+            for level, pct in SELL_LADDER:
+                if rsi >= level:
+                    amount = TRADE_VOLUME * pct
+                    log(f"🔴 RSI {rsi:.2f} >= {level} → SELL ${amount}")
+                    execute_trade("sell", round(amount / df['close'].iloc[-1], 6))
+                    last_trade_time = current_time
+                    state['sold_out'] = True
+                    save_state(state)
+                    break
+
+        # === RESET LOGIC ===
+        if state['sold_out'] and rsi <= 47:
+            log("🔁 RSI <= 47 — cycle reset, bot can buy again")
+            state['sold_out'] = False
+            save_state(state)
+
+        time.sleep(300)
+
+    except Exception as e:
+        log(f"⚠️ ERROR: {e}")
+        time.sleep(60)
