@@ -17,102 +17,88 @@ TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # 100% fiat at RSI 32
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # 100% fiat deploy at RSI 32
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
+
 REBUY_RSI_THRESHOLD = 47
-MIN_RSI_FOR_MANUAL = 27
+MIN_BUY_RSI = 27  # Force buy at or below this RSI
 
-# === STATE TRACKERS ===
-last_buy_rsi = 100
-already_sold = set()
+last_buy_rsi = 100  # Track last buy RSI to prevent repeats
 
-# === KRAKEN INITIALIZATION ===
-k = krakenex.API(key=API_KEY, secret=API_SECRET)
+# === INIT KRAKEN ===
+k = krakenex.API(API_KEY, API_SECRET)
 kraken = KrakenAPI(k)
 
-def get_rsi():
-    ohlc = k.query_public('OHLC', {'pair': PAIR, 'interval': TIMEFRAME})['result']
-    pair_key = next(iter(ohlc))
-    candles = ohlc[pair_key]
-    df = pd.DataFrame(candles, columns=['time','open','high','low','close','vwap','volume','count'])
-    df['close'] = pd.to_numeric(df['close'])
+def fetch_rsi():
+    url = f"https://api.kraken.com/0/public/OHLC?pair={PAIR}&interval={TIMEFRAME}"
+    df = pd.DataFrame(requests.get(url).json()['result'][PAIR], columns=[
+        'time','open','high','low','close','vwap','volume','count'
+    ])
+    df['close'] = df['close'].astype(float)
     rsi = RSIIndicator(df['close'], window=14).rsi().iloc[-1]
     return round(rsi, 2)
 
-def get_balances():
+def fetch_balances():
     balances = kraken.get_account_balance()
-    fiat = float(balances[QUOTE]) if QUOTE in balances else 0.0
-    btc = float(balances[ASSET]) if ASSET in balances else 0.0
+    fiat = float(balances.get(QUOTE, 0))
+    btc = float(balances.get(ASSET, 0))
     return fiat, btc
 
-def get_price():
-    ticker = k.query_public('Ticker', {'pair': PAIR})['result']
-    price = float(list(ticker.values())[0]['c'][0])
-    return price
+def place_buy_order(percent):
+    fiat, _ = fetch_balances()
+    amount = fiat * percent
+    price = float(kraken.get_ticker_information(PAIR)['c'][0])
+    volume = round(amount / price, 6)
+    if volume > 0:
+        print(f"📈 BUYING {volume} BTC using ${amount:.2f}")
+        # kraken.add_standard_order(PAIR, 'buy', 'market', volume)
 
-def buy_btc(amount_usd):
-    print(f"[BUY] Buying ${amount_usd:.2f} worth of BTC")
-    price = get_price()
-    volume = round(amount_usd / price, 8)
-    k.query_private('AddOrder', {
-        'pair': PAIR,
-        'type': 'buy',
-        'ordertype': 'market',
-        'volume': str(volume)
-    })
+def place_sell_order(percent):
+    _, btc = fetch_balances()
+    amount = btc * percent
+    if amount > 0:
+        print(f"📉 SELLING {amount:.6f} BTC at current RSI step")
+        # kraken.add_standard_order(PAIR, 'sell', 'market', round(amount, 6))
 
-def sell_btc(percent):
-    fiat, btc = get_balances()
-    sell_amt = round(btc * percent, 8)
-    if sell_amt > 0:
-        print(f"[SELL] Selling {percent*100:.0f}% = {sell_amt} BTC")
-        k.query_private('AddOrder', {
-            'pair': PAIR,
-            'type': 'sell',
-            'ordertype': 'market',
-            'volume': str(sell_amt)
-        })
-
-def run_bot():
+def execute_strategy():
     global last_buy_rsi
     while True:
         try:
-            rsi = get_rsi()
-            fiat, btc = get_balances()
             now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
-            print(f"[{now}] RSI: {rsi}, USD: {fiat:.2f}, BTC: {btc:.6f}")
-
-            # === BUY LOGIC ===
-            if rsi <= MIN_RSI_FOR_MANUAL and fiat > 0:
-                print("[EMERGENCY BUY] RSI <= 27 – Buying ALL fiat!")
-                buy_btc(fiat)
-
-            elif rsi <= REBUY_RSI_THRESHOLD and rsi < last_buy_rsi:
-                for level, portion in BUY_LADDER:
-                    if rsi <= level and fiat > 0:
-                        allocation = fiat * portion if level != 32 else fiat
-                        print(f"[BUY] RSI ≤ {level} – Executing buy for ${allocation:.2f}")
-                        buy_btc(allocation)
-                        last_buy_rsi = rsi
-                        break
+            rsi = fetch_rsi()
+            fiat, btc = fetch_balances()
+            print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
 
             # === SELL LOGIC ===
-            for level, portion in SELL_LADDER:
-                if rsi >= level and level not in already_sold:
-                    sell_btc(portion)
-                    already_sold.add(level)
+            for level, pct in SELL_LADDER:
+                if rsi >= level and btc > 0:
+                    place_sell_order(pct)
 
-            # Reset sell ladder
-            if rsi <= REBUY_RSI_THRESHOLD:
-                already_sold.clear()
+            # === BUY LOGIC ===
+            if fiat > 0:
+                if rsi <= MIN_BUY_RSI:
+                    print("🚨 EXTREME DIP: RSI ≤ 27 — BUYING FULL FIAT")
+                    place_buy_order(1.0)
+                    last_buy_rsi = rsi
+
+                elif rsi < last_buy_rsi:
+                    for level, pct in BUY_LADDER:
+                        if rsi <= level:
+                            print(f"✅ RSI {rsi} hit buy ladder level {level} — buying {pct*100:.0f}% of fiat")
+                            place_buy_order(pct)
+                            last_buy_rsi = rsi
+                            break
+
+            # === RESET FLAG ===
+            if rsi > REBUY_RSI_THRESHOLD:
+                last_buy_rsi = 100
+
+            time.sleep(60)  # Check every 60 seconds
 
         except Exception as e:
-            print(f"[ERROR] {e}")
+            print(f"❌ Error: {e}")
+            time.sleep(60)
 
-        time.sleep(60)  # Run every 1 minute
-
-# === FORCE START EVEN IF NOT __main__ ===
-try:
-    run_bot()
-except KeyboardInterrupt:
-    print("Bot stopped by user.")
+# === START BOT ===
+if __name__ == "__main__":
+    execute_strategy()
