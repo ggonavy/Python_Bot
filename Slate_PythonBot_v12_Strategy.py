@@ -111,5 +111,8 @@ def run_bot():
 
         time.sleep(60)  # Run every 1 minute
 
-if __name__ == "__main__":
+# === FORCE START EVEN IF NOT __main__ ===
+try:
     run_bot()
+except KeyboardInterrupt:
+    print("Bot stopped by user.")
