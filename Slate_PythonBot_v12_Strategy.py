@@ -12,17 +12,17 @@ API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
 API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
 PAIR = "XBTUSD"
 ASSET = "XXBT"
-QUOTE = "ZUSD"  # 🔍 TEMP — we’ll update this to "USD" or correct fiat after log output
-TIMEFRAME = 60  # 1-hour
+QUOTE = "ZUSD"  # ⚠️ TEMP — we’ll update this once logs confirm correct fiat key
+TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
-# === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # ≤32 = full fiat buy
+# === STRATEGY SETTINGS ===
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # RSI ≤ 32 → 100% fiat
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 REBUY_RSI_THRESHOLD = 47
 last_buy_rsi = 100
 
-# === CONNECT TO KRAKEN ===
+# === KRAKEN CONNECTION ===
 api = krakenex.API(API_KEY, API_SECRET)
 k = KrakenAPI(api)
 
@@ -46,7 +46,7 @@ def fetch_latest_rsi():
 
 def get_balances():
     balances = k.get_account_balance()
-    
+
     log("🔍 RAW BALANCES:")
     for asset in balances.index:
         vol = balances.loc[asset]["vol"]
@@ -58,17 +58,4 @@ def get_balances():
 
 def place_market_buy(usd_amount):
     if usd_amount < 5:
-        log(f"🟡 Not enough USD to buy: ${usd_amount:.2f}")
-        return
-    price = float(k.get_ticker_information(PAIR).loc[PAIR]['c'][0])
-    volume = round(usd_amount / price, 8)
-    response = k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
-    log(f"✅ BUY: {volume:.8f} BTC at ~${price:.2f} for ${usd_amount:.2f}")
-    return response
-
-def place_market_sell(btc_amount):
-    if btc_amount < 0.0001:
-        log(f"🟡 Not enough BTC to sell: {btc_amount:.8f}")
-        return
-    response = k.add_standard_order(pair=PAIR, type='sell', ordertype='market', volume=round(btc_amount, 8))
-    log(f"✅ SELL: {btc_amount:.8f} BTC at market")
+        log(f"🟡 Not enough USD to buy: ${usd_amount
