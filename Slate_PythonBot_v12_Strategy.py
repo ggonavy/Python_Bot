@@ -12,15 +12,15 @@ API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
 API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
 PAIR = "XBTUSD"
 ASSET = "XXBT"
-QUOTE = "ZUSD"  # ✅ We’ll confirm this based on your actual fiat balance
-TIMEFRAME = 60
+QUOTE = "ZUSD"
+TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # 32 = all fiat
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 REBUY_RSI_THRESHOLD = 47
-last_buy_rsi = 100
+last_buy_rsi = 100  # Init high so it triggers on drop
 
 # === KRAKEN CONNECTION ===
 api = krakenex.API(API_KEY, API_SECRET)
@@ -55,7 +55,7 @@ def get_balances():
 
 def place_market_buy(usd_amount):
     if usd_amount < 5:
-        log(f"🟡 Not enough USD to buy: {usd_amount:.2f}")  # ✅ FIXED
+        log(f"🟡 Not enough USD to buy: ${usd_amount:.2f}")
         return
     price = float(k.get_ticker_information(PAIR).loc[PAIR]['c'][0])
     volume = round(usd_amount / price, 8)
@@ -79,19 +79,20 @@ def run_bot():
             btc_balance, usd_balance = get_balances()
             log(f"🔁 RSI: {rsi} | BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
 
+            # === SELLING LOGIC ===
             for sell_rsi, portion in SELL_LADDER:
                 if rsi >= sell_rsi and btc_balance > 0:
                     sell_amount = btc_balance * portion
                     place_market_sell(sell_amount)
-                    last_buy_rsi = 100
+                    last_buy_rsi = 100  # Reset after sell
 
+            # === BUYING LOGIC ===
             if rsi <= REBUY_RSI_THRESHOLD:
                 for buy_rsi, portion in BUY_LADDER:
                     if rsi <= buy_rsi and usd_balance > 5:
-                        buy_amount = usd_balance * portion if buy_rsi != 32 else usd_balance
+                        buy_amount = usd_balance if buy_rsi == 32 else usd_balance * portion
                         place_market_buy(buy_amount)
                         last_buy_rsi = rsi
-
         except Exception as e:
             log(f"❌ ERROR: {e}")
         time.sleep(60)
