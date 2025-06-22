@@ -1,5 +1,4 @@
 import time
-import requests
 import pandas as pd
 from ta.momentum import RSIIndicator
 from datetime import datetime
@@ -10,86 +9,97 @@ from pykrakenapi import KrakenAPI
 # === CONFIGURATION ===
 API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
 API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
-PAIR = "XXBTZUSD"       # ✅ Correct Kraken OHLC pair for BTC/USD
+PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
-TIMEFRAME = 60          # 1H candles
+TIMEFRAME = 60  # 1 hour
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # Full buy at RSI 32
-SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)] # Sell 100% as we climb
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # Last step uses 100%
+SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 REBUY_RSI_THRESHOLD = 47
-last_buy_rsi = 100  # Start with a neutral state
+MIN_RSI_FOR_BUY = 0  # Allow buying even under RSI 27
 
-# === INIT KRAKEN ===
-kraken = krakenex.API(API_KEY, API_SECRET)
-k = KrakenAPI(kraken)
+# === CONNECT TO KRAKEN ===
+k = krakenex.API(key=API_KEY, secret=API_SECRET)
+api = KrakenAPI(k)
 
-def fetch_latest_rsi():
-    url = f"https://api.kraken.com/0/public/OHLC"
-    params = {"pair": PAIR, "interval": TIMEFRAME}
-    response = requests.get(url, params=params)
-    data = response.json()
+# === TRACKER ===
+last_buy_rsi = 100
 
-    if not data['error']:
-        ohlc_key = list(data['result'].keys())[0]
-        ohlc_data = data['result'][ohlc_key]
-        df = pd.DataFrame(ohlc_data, columns=["time","open","high","low","close","vwap","volume","count"])
-        df["close"] = pd.to_numeric(df["close"])
-        rsi = RSIIndicator(df["close"], window=14).rsi().iloc[-1]
-        return round(rsi, 2)
-    else:
-        print("❌ Kraken OHLC Error:", data['error'])
+def get_ohlc():
+    df, _ = api.get_ohlc_data(PAIR, interval=TIMEFRAME)
+    df = df.tz_convert(TIMEZONE)
+    return df
+
+def get_latest_rsi(df):
+    rsi = RSIIndicator(close=df['close'], window=14).rsi()
+    return rsi.iloc[-1]
+
+def get_balance(asset):
+    balances = api.get_account_balance()
+    return float(balances.loc[asset, 'vol']) if asset in balances.index else 0.0
+
+def place_market_order(pair, volume, side):
+    try:
+        k.query_private('AddOrder', {
+            'pair': pair,
+            'type': side,
+            'ordertype': 'market',
+            'volume': str(volume)
+        })
+        print(f">>> Placed {side.upper()} order for {volume} BTC")
+    except Exception as e:
+        print(f"Order failed: {e}")
+
+def get_price():
+    try:
+        price = float(k.get_ticker_information(PAIR)["c"][0])
+        return price
+    except Exception as e:
+        print(f"Price fetch failed: {e}")
         return None
 
-def get_balances():
-    balances = k.get_account_balance()
-    btc = float(balances.loc[ASSET]['vol'])
-    usd = float(balances.loc[QUOTE]['vol'])
-    return btc, usd
-
-def place_order(order_type, volume):
-    try:
-        k.add_standard_order(pair="XBTUSD", type=order_type, ordertype="market", volume=volume)
-        print(f"✅ Placed {order_type.upper()} order for {volume} BTC.")
-    except Exception as e:
-        print(f"❌ Order Error: {e}")
-
-def execute_trade_logic():
+def main():
     global last_buy_rsi
-    rsi = fetch_latest_rsi()
-    if rsi is None:
-        return
+    while True:
+        try:
+            df = get_ohlc()
+            current_rsi = get_latest_rsi(df)
+            price = get_price()
+            fiat = get_balance(QUOTE)
+            btc = get_balance(ASSET)
 
-    btc_balance, usd_balance = get_balances()
-    print(f"🔁 RSI: {rsi} | BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] RSI: {current_rsi:.2f}, Price: {price}, Fiat: {fiat}, BTC: {btc}")
 
-    # SELL Logic (Sell all BTC if RSI crosses ladder zones)
-    for level, portion in SELL_LADDER:
-        if rsi >= level and btc_balance > 0:
-            sell_volume = btc_balance * portion
-            place_order("sell", round(sell_volume, 6))
-            time.sleep(1)
+            # === BUY Logic ===
+            if current_rsi <= REBUY_RSI_THRESHOLD and fiat > 10:
+                for rsi_level, percent in BUY_LADDER:
+                    if current_rsi <= rsi_level and fiat > 10:
+                        buy_amount = (percent * fiat) / price
+                        place_market_order(PAIR, buy_amount, 'buy')
+                        last_buy_rsi = current_rsi
+                        time.sleep(5)
 
-    # BUY Logic (Buy when RSI dips below levels)
-    if rsi <= last_buy_rsi:
-        for level, portion in BUY_LADDER:
-            if rsi <= level and usd_balance > 10:
-                buy_amount = usd_balance * portion
-                price = float(k.get_ticker_information("XBTUSD")["c"][0])
-                volume = round(buy_amount / price, 6)
-                place_order("buy", volume)
-                time.sleep(1)
-        if rsi <= 32:
-            last_buy_rsi = 100  # Reset to avoid rebuy until RSI climbs again
-    elif rsi >= REBUY_RSI_THRESHOLD:
-        last_buy_rsi = rsi  # Reset ladder after RSI recovery
+            # === Continue buying below RSI 32 using all fiat
+            if current_rsi <= 32 and fiat > 10:
+                buy_amount = fiat / price
+                place_market_order(PAIR, buy_amount, 'buy')
+                last_buy_rsi = current_rsi
+                time.sleep(5)
 
-# === MAIN LOOP ===
-while True:
-    try:
-        execute_trade_logic()
-    except Exception as e:
-        print(f"❌ Bot Crash: {e}")
-    time.sleep(60)
+            # === SELL Logic ===
+            for rsi_level, percent in SELL_LADDER:
+                if current_rsi >= rsi_level and btc > 0.0001:
+                    sell_amount = percent * btc
+                    place_market_order(PAIR, sell_amount, 'sell')
+                    time.sleep(5)
+
+        except Exception as e:
+            print(f"Error: {e}")
+
+        time.sleep(300)  # Check every 5 minutes
+
+if __name__ == "__main__":
+    main()
