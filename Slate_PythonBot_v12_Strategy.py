@@ -8,95 +8,87 @@ import krakenex
 from pykrakenapi import KrakenAPI
 
 # === CONFIGURATION ===
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
-API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
+API_KEY = "PASTE_YOUR_KRAKEN_API_KEY_HERE"
+API_SECRET = "PASTE_YOUR_KRAKEN_SECRET_KEY_HERE"
 PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
-TIMEFRAME = 60  # 1 hour candles
-CHECK_INTERVAL = 300  # check every 5 minutes
+TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-MIN_RSI_FOR_BUY = 27
-REBUY_RSI_THRESHOLD = 47
-
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 0.40)]
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30)]
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 
-last_buy_rsi = 100  # reset value
-bought_btc = 0.0
+bought = False
+last_rsi_buys = set()
 
-# === INIT API ===
+# === CONNECT TO KRAKEN ===
 api = krakenex.API(API_KEY, API_SECRET)
-kraken = KrakenAPI(api)
+k = KrakenAPI(api)
 
-def log(message):
+def log(msg):
     now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{now}] {message}")
+    print(f"[{now}] {msg}")
 
-def fetch_rsi():
-    url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": PAIR, "interval": TIMEFRAME}
-    res = requests.get(url, params=params).json()
-    candles = list(res['result'].values())[0]
-    df = pd.DataFrame(candles, columns=[
-        "time", "open", "high", "low", "close", "vwap", "volume", "count"
-    ])
-    df['close'] = df['close'].astype(float)
-    rsi = RSIIndicator(close=df['close'], window=14).rsi().iloc[-1]
-    return round(rsi, 2)
-
-def get_balances():
-    balances = kraken.get_account_balance()
-    usd = float(balances.get(QUOTE, 0.0))
-    btc = float(balances.get(ASSET, 0.0))
-    return usd, btc
-
-def execute_market_order(pair, type_, volume):
+while True:
     try:
-        kraken.add_standard_order(pair=pair, type=type_, ordertype='market', volume=str(volume))
-        log(f"Executed {type_} order for {volume} {ASSET}")
+        # === FETCH DATA ===
+        ohlc, _ = k.get_ohlc_data(PAIR, interval=TIMEFRAME)
+        df = ohlc.tail(100).copy()
+        df['rsi'] = RSIIndicator(df['close'], window=14).rsi()
+        current_rsi = df['rsi'].iloc[-1]
+        current_price = df['close'].iloc[-1]
+        fiat_balance = k.get_account_balance()[QUOTE]['vol']
+        btc_balance = k.get_account_balance()[ASSET]['vol']
+
+        log(f"RSI: {current_rsi:.2f} | Price: {current_price:.2f} | USD: {fiat_balance:.2f} | BTC: {btc_balance:.5f}")
+
+        # === BUY LOGIC ===
+        if float(current_rsi) <= 32:
+            if float(current_rsi) <= 27:
+                if float(fiat_balance) > 5:
+                    volume = float(fiat_balance) / current_price
+                    log(f"🔥 PANIC BUY @ RSI {current_rsi:.2f} — Using ALL ${fiat_balance:.2f} to buy BTC")
+                    k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
+                    bought = True
+            else:
+                if float(fiat_balance) > 5:
+                    volume = float(fiat_balance) / current_price
+                    log(f"⚡ RSI 32 Trigger — Buying FULL USD ${fiat_balance:.2f}")
+                    k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
+                    bought = True
+
+        elif float(current_rsi) <= 47:
+            for rsi_level, portion in BUY_LADDER:
+                if float(current_rsi) <= rsi_level and rsi_level not in last_rsi_buys:
+                    usd_to_spend = float(fiat_balance) * portion
+                    if usd_to_spend > 5:
+                        volume = usd_to_spend / current_price
+                        log(f"✅ Ladder Buy @ RSI {current_rsi:.2f} ≤ {rsi_level} — Buying ${usd_to_spend:.2f}")
+                        k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
+                        last_rsi_buys.add(rsi_level)
+                        bought = True
+                    else:
+                        log(f"💤 Not enough USD to buy @ RSI {rsi_level} (Only ${usd_to_spend:.2f})")
+                    break
+
+        # === SELL LOGIC ===
+        if bought:
+            for rsi_level, portion in SELL_LADDER:
+                if float(current_rsi) >= rsi_level:
+                    btc_to_sell = float(btc_balance) * portion
+                    if btc_to_sell > 0.00001:
+                        log(f"🔺 SELL @ RSI {current_rsi:.2f} ≥ {rsi_level} — Selling {btc_to_sell:.6f} BTC")
+                        k.add_standard_order(pair=PAIR, type='sell', ordertype='market', volume=btc_to_sell)
+                        last_rsi_buys.clear()
+                        bought = False
+                    else:
+                        log(f"💤 Not enough BTC to sell @ RSI {rsi_level} ({btc_to_sell:.6f})")
+                    break
+
+        time.sleep(5)
+
     except Exception as e:
-        log(f"Order failed: {e}")
-
-def main():
-    global last_buy_rsi, bought_btc
-
-    while True:
-        try:
-            rsi = fetch_rsi()
-            usd_balance, btc_balance = get_balances()
-            log(f"RSI: {rsi} | USD: {usd_balance:.2f} | BTC: {btc_balance:.6f}")
-
-            # === SELL LADDER ===
-            for level, percent in SELL_LADDER:
-                if rsi >= level and btc_balance > 0:
-                    sell_amount = btc_balance * percent
-                    execute_market_order(PAIR, 'sell', round(sell_amount, 6))
-                    btc_balance -= sell_amount
-
-            # === BUY LADDER ===
-            if rsi >= MIN_RSI_FOR_BUY:
-                if last_buy_rsi > REBUY_RSI_THRESHOLD and rsi <= REBUY_RSI_THRESHOLD:
-                    log("RSI reset, rebuy enabled.")
-
-                if last_buy_rsi <= REBUY_RSI_THRESHOLD:
-                    for level, percent in BUY_LADDER:
-                        if rsi <= level and usd_balance > 0:
-                            usd_to_use = usd_balance * percent
-                            price_res = kraken.get_ticker_information(PAIR)
-                            price = float(price_res[0]['c'][0])
-                            volume = usd_to_use / price
-                            execute_market_order(PAIR, 'buy', round(volume, 6))
-                            usd_balance -= usd_to_use
-
-            last_buy_rsi = rsi
-            time.sleep(CHECK_INTERVAL)
-
-        except Exception as e:
-            log(f"Main loop error: {e}")
-            time.sleep(CHECK_INTERVAL)
-
-if __name__ == "__main__":
-    main()
+        log(f"⚠️ ERROR: {e}")
+        time.sleep(10)
