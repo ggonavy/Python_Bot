@@ -7,13 +7,14 @@ from pytz import timezone
 import krakenex
 from pykrakenapi import KrakenAPI
 
-# === CONFIGURATION ===
-API_KEY = "PASTE_YOUR_KRAKEN_API_KEY_HERE"
-API_SECRET = "PASTE_YOUR_KRAKEN_SECRET_KEY_HERE"
-PAIR = "XBTUSD"
-ASSET = "XXBT"
-QUOTE = "ZUSD"
-TIMEFRAME = 60  # 1-hour candles
+# === USER CONFIGURATION ===
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
+
+PAIR = "XBTUSD"      # Kraken trading pair
+ASSET = "XXBT"       # BTC
+QUOTE = "ZUSD"       # USD
+TIMEFRAME = 60       # 1-hour timeframe
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
@@ -42,22 +43,15 @@ while True:
         fiat_balance = k.get_account_balance()[QUOTE]['vol']
         btc_balance = k.get_account_balance()[ASSET]['vol']
 
-        log(f"RSI: {current_rsi:.2f} | Price: {current_price:.2f} | USD: {fiat_balance:.2f} | BTC: {btc_balance:.5f}")
+        log(f"RSI: {current_rsi:.2f} | Price: {current_price:.2f} | USD: {fiat_balance:.2f} | BTC: {btc_balance:.6f}")
 
         # === BUY LOGIC ===
         if float(current_rsi) <= 32:
-            if float(current_rsi) <= 27:
-                if float(fiat_balance) > 5:
-                    volume = float(fiat_balance) / current_price
-                    log(f"🔥 PANIC BUY @ RSI {current_rsi:.2f} — Using ALL ${fiat_balance:.2f} to buy BTC")
-                    k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
-                    bought = True
-            else:
-                if float(fiat_balance) > 5:
-                    volume = float(fiat_balance) / current_price
-                    log(f"⚡ RSI 32 Trigger — Buying FULL USD ${fiat_balance:.2f}")
-                    k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
-                    bought = True
+            if float(fiat_balance) > 5:
+                volume = float(fiat_balance) / current_price
+                log(f"⚡ BUY FULL @ RSI {current_rsi:.2f} — Using ALL ${fiat_balance:.2f}")
+                k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
+                bought = True
 
         elif float(current_rsi) <= 47:
             for rsi_level, portion in BUY_LADDER:
@@ -69,8 +63,6 @@ while True:
                         k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
                         last_rsi_buys.add(rsi_level)
                         bought = True
-                    else:
-                        log(f"💤 Not enough USD to buy @ RSI {rsi_level} (Only ${usd_to_spend:.2f})")
                     break
 
         # === SELL LOGIC ===
@@ -83,8 +75,6 @@ while True:
                         k.add_standard_order(pair=PAIR, type='sell', ordertype='market', volume=btc_to_sell)
                         last_rsi_buys.clear()
                         bought = False
-                    else:
-                        log(f"💤 Not enough BTC to sell @ RSI {rsi_level} ({btc_to_sell:.6f})")
                     break
 
         time.sleep(5)
