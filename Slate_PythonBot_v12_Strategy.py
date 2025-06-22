@@ -17,88 +17,86 @@ TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # 100% fiat deploy at RSI 32
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # 100% fiat at RSI 32
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
-
 REBUY_RSI_THRESHOLD = 47
-MIN_BUY_RSI = 27  # Force buy at or below this RSI
+last_buy_rsi = 100
 
-last_buy_rsi = 100  # Track last buy RSI to prevent repeats
+# === CONNECT TO KRAKEN ===
+k = krakenex.API(key=API_KEY, secret=API_SECRET)
+api = KrakenAPI(k)
 
-# === INIT KRAKEN ===
-k = krakenex.API(API_KEY, API_SECRET)
-kraken = KrakenAPI(k)
+def get_ohlcv():
+    try:
+        ohlc, _ = api.get_ohlc_data(PAIR, interval=TIMEFRAME)
+        return ohlc
+    except Exception as e:
+        print(f"[Error] Failed to fetch OHLCV: {e}")
+        return None
 
-def fetch_rsi():
-    url = f"https://api.kraken.com/0/public/OHLC?pair={PAIR}&interval={TIMEFRAME}"
-    df = pd.DataFrame(requests.get(url).json()['result'][PAIR], columns=[
-        'time','open','high','low','close','vwap','volume','count'
-    ])
-    df['close'] = df['close'].astype(float)
-    rsi = RSIIndicator(df['close'], window=14).rsi().iloc[-1]
+def get_rsi(ohlcv):
+    close_prices = ohlcv['close']
+    rsi = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
     return round(rsi, 2)
 
-def fetch_balances():
-    balances = kraken.get_account_balance()
-    fiat = float(balances.get(QUOTE, 0))
-    btc = float(balances.get(ASSET, 0))
-    return fiat, btc
+def get_balances():
+    try:
+        balances = k.query_private('Balance')['result']
+        fiat = float(balances.get(QUOTE, 0))
+        btc = float(balances.get(ASSET, 0))
+        return fiat, btc
+    except Exception as e:
+        print(f"[Error] Failed to fetch balances: {e}")
+        return 0, 0
 
-def place_buy_order(percent):
-    fiat, _ = fetch_balances()
-    amount = fiat * percent
-    price = float(kraken.get_ticker_information(PAIR)['c'][0])
-    volume = round(amount / price, 6)
-    if volume > 0:
-        print(f"📈 BUYING {volume} BTC using ${amount:.2f}")
-        # kraken.add_standard_order(PAIR, 'buy', 'market', volume)
+def place_order(order_type, volume):
+    try:
+        print(f"[Placing {order_type}] Volume: {volume}")
+        response = k.query_private('AddOrder', {
+            'pair': PAIR,
+            'type': order_type,
+            'ordertype': 'market',
+            'volume': volume
+        })
+        print(f"[Order Response] {response}")
+    except Exception as e:
+        print(f"[Error] Order failed: {e}")
 
-def place_sell_order(percent):
-    _, btc = fetch_balances()
-    amount = btc * percent
-    if amount > 0:
-        print(f"📉 SELLING {amount:.6f} BTC at current RSI step")
-        # kraken.add_standard_order(PAIR, 'sell', 'market', round(amount, 6))
-
-def execute_strategy():
+def run_bot():
     global last_buy_rsi
     while True:
-        try:
-            now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
-            rsi = fetch_rsi()
-            fiat, btc = fetch_balances()
-            print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
+        now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"\n=== {now} ===")
+        ohlcv = get_ohlcv()
+        if ohlcv is None or ohlcv.empty:
+            print("No OHLCV data pulled.")
+            time.sleep(30)
+            continue
 
-            # === SELL LOGIC ===
-            for level, pct in SELL_LADDER:
-                if rsi >= level and btc > 0:
-                    place_sell_order(pct)
+        try:
+            rsi = get_rsi(ohlcv)
+            fiat, btc = get_balances()
+            print(f"RSI: {rsi} | Fiat: {fiat:.2f} | BTC: {btc:.6f}")
 
             # === BUY LOGIC ===
-            if fiat > 0:
-                if rsi <= MIN_BUY_RSI:
-                    print("🚨 EXTREME DIP: RSI ≤ 27 — BUYING FULL FIAT")
-                    place_buy_order(1.0)
-                    last_buy_rsi = rsi
+            if rsi <= REBUY_RSI_THRESHOLD:
+                last_buy_rsi = 100  # Reset after cooldown
 
-                elif rsi < last_buy_rsi:
-                    for level, pct in BUY_LADDER:
-                        if rsi <= level:
-                            print(f"✅ RSI {rsi} hit buy ladder level {level} — buying {pct*100:.0f}% of fiat")
-                            place_buy_order(pct)
-                            last_buy_rsi = rsi
-                            break
+            if rsi <= last_buy_rsi:
+                for threshold, portion in BUY_LADDER:
+                    if rsi <= threshold and fiat > 10:
+                        if threshold == 32:
+                            portion = 1.0  # Use 100% fiat
+                        buy_usd = fiat * portion
+                        btc_price = ohlcv['close'].iloc[-1]
+                        volume = round(buy_usd / btc_price, 6)
+                        print(f"Triggering BUY at RSI {rsi} for ${buy_usd:.2f}")
+                        place_order('buy', volume)
+                        last_buy_rsi = rsi
+                        break
 
-            # === RESET FLAG ===
-            if rsi > REBUY_RSI_THRESHOLD:
-                last_buy_rsi = 100
-
-            time.sleep(60)  # Check every 60 seconds
-
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            time.sleep(60)
-
-# === START BOT ===
-if __name__ == "__main__":
-    execute_strategy()
+            # === SELL LOGIC ===
+            for threshold, portion in SELL_LADDER:
+                if rsi >= threshold and btc > 0.0001:
+                    sell_volume = btc * portion
+                    print(f"Triggering SELL at RSI {rsi} for {
