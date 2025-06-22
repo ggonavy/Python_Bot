@@ -12,17 +12,17 @@ API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
 API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
 PAIR = "XBTUSD"
 ASSET = "XXBT"
-QUOTE = "ZUSD"
+QUOTE = "ZUSD"  # ⚠️ This might be incorrect — we will debug and confirm
 TIMEFRAME = 60  # 1 hour candles
 TIMEZONE = 'US/Eastern'
 
-# === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # 100% fiat if RSI ≤ 32
+# === STRATEGY SETTINGS ===
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 REBUY_RSI_THRESHOLD = 47
 last_buy_rsi = 100
 
-# === KRAKEN CLIENT ===
+# === CONNECT TO KRAKEN ===
 api = krakenex.API(API_KEY, API_SECRET)
 k = KrakenAPI(api)
 
@@ -34,11 +34,8 @@ def fetch_latest_rsi():
     url = "https://api.kraken.com/0/public/OHLC"
     params = {"pair": PAIR, "interval": TIMEFRAME}
     response = requests.get(url, params=params).json()
-
-    # === FIX: Auto-detect the OHLC key dynamically
-    ohlc_key = [key for key in response['result'].keys() if key != 'last'][0]
+    ohlc_key = [key for key in response['result'] if key != 'last'][0]
     candles = response['result'][ohlc_key]
-
     df = pd.DataFrame(candles, columns=[
         'time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
     ])
@@ -48,13 +45,19 @@ def fetch_latest_rsi():
 
 def get_balances():
     balances = k.get_account_balance()
+    
+    # === 🔍 DEBUG: Print all keys so we know your real fiat symbol
+    log("🔍 RAW BALANCES:")
+    for asset in balances.index:
+        log(f"  {asset} => {balances.loc[asset]['vol']}")
+
     btc = float(balances.loc[ASSET]['vol']) if ASSET in balances.index else 0.0
     usd = float(balances.loc[QUOTE]['vol']) if QUOTE in balances.index else 0.0
     return btc, usd
 
 def place_market_buy(usd_amount):
     if usd_amount < 5:
-        log(f"🟡 Skipping buy, not enough USD: ${usd_amount:.2f}")
+        log(f"🟡 Not enough USD to buy: ${usd_amount:.2f}")
         return
     price = float(k.get_ticker_information(PAIR).loc[PAIR]['c'][0])
     volume = round(usd_amount / price, 8)
@@ -64,7 +67,7 @@ def place_market_buy(usd_amount):
 
 def place_market_sell(btc_amount):
     if btc_amount < 0.0001:
-        log(f"🟡 Skipping sell, not enough BTC: {btc_amount:.8f}")
+        log(f"🟡 Not enough BTC to sell: {btc_amount:.8f}")
         return
     response = k.add_standard_order(pair=PAIR, type='sell', ordertype='market', volume=round(btc_amount, 8))
     log(f"✅ Sold {btc_amount:.8f} BTC at market price")
@@ -84,7 +87,7 @@ def run_bot():
                 if rsi >= sell_rsi and btc_balance > 0:
                     sell_amount = btc_balance * portion
                     place_market_sell(sell_amount)
-                    last_buy_rsi = 100  # Reset to block further buys
+                    last_buy_rsi = 100
 
             # === BUY LOGIC ===
             if rsi <= REBUY_RSI_THRESHOLD:
@@ -97,9 +100,9 @@ def run_bot():
         except Exception as e:
             log(f"❌ ERROR: {e}")
 
-        time.sleep(60)  # Check RSI every 60 seconds
+        time.sleep(60)
 
 # === START BOT ===
 if __name__ == "__main__":
-    log("🚀 Starting SlateBot v12 (Kraken 1H)...")
+    log("🚀 Starting SlateBot v12 (Kraken Live 1H)")
     run_bot()
