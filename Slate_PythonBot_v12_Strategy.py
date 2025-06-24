@@ -34,7 +34,7 @@ def fetch_ohlcv():
         df.index = df.index.tz_localize(TIMEZONE)
     except TypeError:
         df.index = df.index.tz_convert(TIMEZONE)
-    df.index.freq = None
+    df.index.freq = None  # Fix deprecation warning
     return df
 
 def get_rsi(df):
@@ -64,7 +64,7 @@ def execute_sell(percent, btc_balance):
     api.add_standard_order(PAIR, 'sell', 'market', volume)
     print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] 🔻 SELL {volume} BTC at ${price:.2f}")
 
-# === MAIN LOOP (throttled) ===
+# === MAIN LOOP ===
 while True:
     try:
         df = fetch_ohlcv()
@@ -79,12 +79,13 @@ while True:
             for rsi_threshold, percent in BUY_LADDER:
                 if current_rsi <= rsi_threshold:
                     if current_rsi <= 32:
-                        percent = 1.00
+                        percent = 1.00  # Go all-in at RSI 32
                     print(f"Triggering BUY at RSI {current_rsi:.2f} for {percent * 100:.0f}% of fiat")
                     execute_buy(percent, fiat_balance)
                     last_buy_rsi = current_rsi
                     break
 
+        # === EXTREME DIP OVERRIDE ===
         if current_rsi <= MIN_RSI_OVERRIDE and fiat_balance > 5:
             print("⚠️ RSI extremely low. FORCING full fiat deployment.")
             execute_buy(1.0, fiat_balance)
@@ -104,4 +105,4 @@ while True:
     except Exception as e:
         print(f"❌ Error: {e}")
 
-    time.sleep(5)  # prevent Kraken rate-limit crash
+    time.sleep(5)  # Stabilize API calls
