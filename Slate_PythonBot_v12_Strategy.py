@@ -1,3 +1,4 @@
+
 import time
 import requests
 import pandas as pd
@@ -13,7 +14,7 @@ API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYo
 PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
-TIMEFRAME = 60  # 1H candles
+TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
@@ -76,7 +77,7 @@ while True:
             for rsi_threshold, percent in BUY_LADDER:
                 if current_rsi <= rsi_threshold:
                     if current_rsi <= 32:
-                        percent = 1.00  # Override to full buy
+                        percent = 1.00  # Override to use 100% fiat
                     print(f"Triggering BUY at RSI {current_rsi:.2f} for {percent * 100:.0f}% of fiat")
                     execute_buy(percent, fiat_balance)
                     last_buy_rsi = current_rsi
@@ -101,5 +102,3 @@ while True:
 
     except Exception as e:
         print(f"❌ Error: {e}")
-
-    time.sleep(60)  # Check every minute
