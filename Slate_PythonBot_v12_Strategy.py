@@ -59,7 +59,7 @@ def execute_sell(percent, btc_balance):
     volume = round(btc_balance * percent, 6)
     price = float(api.get_ticker_information(PAIR).loc[PAIR]['c'][0])
     api.add_standard_order(PAIR, 'sell', 'market', volume)
-    print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] 🔻 SELL {volume} BTC at ${price:.2f} (Triggered at RSI)")
+    print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] 🔻 SELL {volume} BTC at ${price:.2f}")
 
 # === MAIN LOOP ===
 while True:
@@ -76,7 +76,7 @@ while True:
             for rsi_threshold, percent in BUY_LADDER:
                 if current_rsi <= rsi_threshold:
                     if current_rsi <= 32:
-                        percent = 1.00  # Force full buy
+                        percent = 1.00  # Override to full buy
                     print(f"Triggering BUY at RSI {current_rsi:.2f} for {percent * 100:.0f}% of fiat")
                     execute_buy(percent, fiat_balance)
                     last_buy_rsi = current_rsi
