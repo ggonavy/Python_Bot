@@ -16,12 +16,12 @@ QUOTE = "ZUSD"
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # At RSI 32, use 100% of fiat
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
-REBUY_RSI_THRESHOLD = 47
 MIN_RSI_FOR_MANUAL = 27
+REBUY_RSI_THRESHOLD = 47
 
-# === KRAKEN CONNECTION ===
+# === KRAKEN SETUP ===
 kraken = krakenex.API(key=API_KEY, secret=API_SECRET)
 k = KrakenAPI(kraken)
 
@@ -43,16 +43,16 @@ def get_balances():
 
 def place_buy_order(pct, fiat):
     spend = fiat * pct
-    print(f"🟢 BUY Order Triggered: {pct*100:.0f}% = ${spend:.2f}")
-    # Uncomment to execute live:
-    # price = k.get_ticker_information(PAIR).ask[0]
-    # volume = spend / price
+    print(f"🟢 BUY Order Triggered: {pct*100:.0f}% of ${fiat:.2f} = ${spend:.2f}")
+    # Live order (uncomment when ready)
+    # ask_price = k.get_ticker_information(PAIR)['a'][0]
+    # volume = spend / float(ask_price)
     # k.add_standard_order(pair=PAIR, type='buy', ordertype='market', volume=volume)
 
 def place_sell_order(pct, btc):
     amount = btc * pct
-    print(f"🔴 SELL Order Triggered: {pct*100:.0f}% = {amount:.6f} BTC")
-    # Uncomment to execute live:
+    print(f"🔴 SELL Order Triggered: {pct*100:.0f}% of {btc:.6f} BTC = {amount:.6f} BTC")
+    # Live order (uncomment when ready)
     # k.add_standard_order(pair=PAIR, type='sell', ordertype='market', volume=amount)
 
 # === MAIN LOOP ===
@@ -63,14 +63,13 @@ def main():
             df = get_ohlc()
             rsi = get_rsi(df)
             btc, fiat = get_balances()
+            now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
 
-            eastern = timezone(TIMEZONE)
-            now = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S')
             print(f"\n{now} | RSI: {rsi:.2f} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
 
-            # === BUY SECTION ===
+            # BUY LOGIC
             if rsi <= MIN_RSI_FOR_MANUAL:
-                print(f"⚠️ RSI dropped below {MIN_RSI_FOR_MANUAL} — manual buy zone")
+                print(f"⚠️ RSI under {MIN_RSI_FOR_MANUAL} — Manual Buy Zone")
 
             elif rsi <= BUY_LADDER[0][0] and fiat > 0:
                 for level, pct in BUY_LADDER:
@@ -80,7 +79,7 @@ def main():
                         last_buy_rsi = rsi
                         break
 
-            # === SELL SECTION ===
+            # SELL LOGIC
             elif rsi >= SELL_LADDER[0][0] and btc > 0:
                 for level, pct in SELL_LADDER:
                     if rsi >= level:
@@ -91,8 +90,8 @@ def main():
         except Exception as e:
             print(f"❌ Error: {e}")
 
-        time.sleep(1)  # 1-second interval
+        time.sleep(1)  # check every second
 
 if __name__ == "__main__":
-    print("🔁 SlateBot v12 started. Monitoring RSI every 1s...")
+    print("🔁 SlateBot v12 LIVE | Watching RSI every 1s...")
     main()
