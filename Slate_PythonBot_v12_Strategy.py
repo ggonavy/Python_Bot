@@ -29,7 +29,7 @@ api = KrakenAPI(k)
 
 def fetch_ohlcv():
     df, _ = api.get_ohlc_data(PAIR, interval=TIMEFRAME)
-    df.index.freq = None  # Suppress deprecation warning
+    df.index.freq = None  # fix for 'T' is deprecated warning
     df = df.tz_convert(TIMEZONE)
     return df
 
@@ -60,7 +60,7 @@ def execute_sell(percent, btc_balance):
     api.add_standard_order(PAIR, 'sell', 'market', volume)
     print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] 🔻 SELL {volume} BTC at ${price:.2f}")
 
-# === MAIN LOOP (no sleep version) ===
+# === MAIN LOOP (No sleep - executes nonstop) ===
 while True:
     try:
         df = fetch_ohlcv()
@@ -75,7 +75,7 @@ while True:
             for rsi_threshold, percent in BUY_LADDER:
                 if current_rsi <= rsi_threshold:
                     if current_rsi <= 32:
-                        percent = 1.00  # All-in override
+                        percent = 1.00
                     print(f"Triggering BUY at RSI {current_rsi:.2f} for {percent * 100:.0f}% of fiat")
                     execute_buy(percent, fiat_balance)
                     last_buy_rsi = current_rsi
