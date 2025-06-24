@@ -12,7 +12,7 @@ API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYo
 PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
-TIMEFRAME = 60  # 1-hour candles
+TIMEFRAME = 60  # 1H candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
@@ -24,7 +24,7 @@ MIN_RSI_OVERRIDE = 27
 # === STATE TRACKING ===
 last_buy_rsi = 100
 
-# === CONNECT TO KRAKEN ===
+# === KRAKEN CONNECTION ===
 k = krakenex.API(API_KEY, API_SECRET)
 api = KrakenAPI(k)
 
@@ -34,12 +34,11 @@ def fetch_ohlcv():
         df.index = df.index.tz_localize(TIMEZONE)
     except TypeError:
         df.index = df.index.tz_convert(TIMEZONE)
-    df.index.freq = None  # Fix deprecation warning
+    df.index.freq = None  # Fix FutureWarning: 'T' deprecated
     return df
 
 def get_rsi(df):
-    rsi = RSIIndicator(close=df['close'], window=14).rsi()
-    return rsi.iloc[-1]
+    return RSIIndicator(close=df['close'], window=14).rsi().iloc[-1]
 
 def get_balances():
     balances = api.get_account_balance()
@@ -50,11 +49,11 @@ def get_balances():
 def execute_buy(percent, fiat_balance):
     if fiat_balance <= 0:
         return
-    amount_to_spend = fiat_balance * percent
+    amount = fiat_balance * percent
     price = float(api.get_ticker_information(PAIR).loc[PAIR]['c'][0])
-    volume = round(amount_to_spend / price, 6)
+    volume = round(amount / price, 6)
     api.add_standard_order(PAIR, 'buy', 'market', volume)
-    print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] ✅ BUY ${amount_to_spend:.2f} at ${price:.2f} ({volume} BTC)")
+    print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] ✅ BUY ${amount:.2f} at ${price:.2f} ({volume} BTC)")
 
 def execute_sell(percent, btc_balance):
     if btc_balance <= 0:
@@ -68,41 +67,41 @@ def execute_sell(percent, btc_balance):
 while True:
     try:
         df = fetch_ohlcv()
-        current_rsi = get_rsi(df)
-        fiat_balance, btc_balance = get_balances()
+        rsi = get_rsi(df)
+        fiat, btc = get_balances()
 
         print(f"\n--- {datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')} ---")
-        print(f"RSI: {current_rsi:.2f} | Fiat: ${fiat_balance:.2f} | BTC: {btc_balance:.6f}")
+        print(f"RSI: {rsi:.2f} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
 
         # === BUY LOGIC ===
-        if current_rsi <= last_buy_rsi and fiat_balance > 5:
-            for rsi_threshold, percent in BUY_LADDER:
-                if current_rsi <= rsi_threshold:
-                    if current_rsi <= 32:
-                        percent = 1.00  # Go all-in at RSI 32
-                    print(f"Triggering BUY at RSI {current_rsi:.2f} for {percent * 100:.0f}% of fiat")
-                    execute_buy(percent, fiat_balance)
-                    last_buy_rsi = current_rsi
+        if rsi <= last_buy_rsi and fiat > 5:
+            for level, pct in BUY_LADDER:
+                if rsi <= level:
+                    if rsi <= 32:
+                        pct = 1.00
+                    print(f"Triggering BUY at RSI {rsi:.2f} for {pct * 100:.0f}% of fiat")
+                    execute_buy(pct, fiat)
+                    last_buy_rsi = rsi
                     break
 
-        # === EXTREME DIP OVERRIDE ===
-        if current_rsi <= MIN_RSI_OVERRIDE and fiat_balance > 5:
+        # === EXTREME DIP BUY ===
+        if rsi <= MIN_RSI_OVERRIDE and fiat > 5:
             print("⚠️ RSI extremely low. FORCING full fiat deployment.")
-            execute_buy(1.0, fiat_balance)
+            execute_buy(1.0, fiat)
 
         # === SELL LOGIC ===
-        if current_rsi >= 73 and btc_balance > 0.0001:
-            for rsi_threshold, percent in SELL_LADDER:
-                if current_rsi >= rsi_threshold:
-                    print(f"Triggering SELL at RSI {current_rsi:.2f} for {percent * 100:.0f}% of BTC")
-                    execute_sell(percent, btc_balance)
+        if rsi >= 73 and btc > 0.0001:
+            for level, pct in SELL_LADDER:
+                if rsi >= level:
+                    print(f"Triggering SELL at RSI {rsi:.2f} for {pct * 100:.0f}% of BTC")
+                    execute_sell(pct, btc)
                     break
 
-        # === RESET REBUY POINT ===
-        if current_rsi > REBUY_RSI_THRESHOLD:
+        # === RESET POINT ===
+        if rsi > REBUY_RSI_THRESHOLD:
             last_buy_rsi = 100
 
     except Exception as e:
         print(f"❌ Error: {e}")
 
-    time.sleep(5)  # Stabilize API calls
+    time.sleep(5)  # Kraken-safe
