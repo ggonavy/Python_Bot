@@ -1,6 +1,3 @@
-
-import time
-import requests
 import pandas as pd
 from ta.momentum import RSIIndicator
 from datetime import datetime
@@ -32,6 +29,7 @@ api = KrakenAPI(k)
 
 def fetch_ohlcv():
     df, _ = api.get_ohlc_data(PAIR, interval=TIMEFRAME)
+    df.index.freq = None  # Fix deprecation warning
     df = df.tz_convert(TIMEZONE)
     return df
 
@@ -77,13 +75,12 @@ while True:
             for rsi_threshold, percent in BUY_LADDER:
                 if current_rsi <= rsi_threshold:
                     if current_rsi <= 32:
-                        percent = 1.00  # Override to use 100% fiat
+                        percent = 1.00
                     print(f"Triggering BUY at RSI {current_rsi:.2f} for {percent * 100:.0f}% of fiat")
                     execute_buy(percent, fiat_balance)
                     last_buy_rsi = current_rsi
                     break
 
-        # === EXTREME DIP OVERRIDE ===
         if current_rsi <= MIN_RSI_OVERRIDE and fiat_balance > 5:
             print("⚠️ RSI extremely low. FORCING full fiat deployment.")
             execute_buy(1.0, fiat_balance)
