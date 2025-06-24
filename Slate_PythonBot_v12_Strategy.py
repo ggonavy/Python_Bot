@@ -43,7 +43,7 @@ def get_balances():
 
 def place_buy_order(pct, fiat):
     spend = fiat * pct
-    print(f"🟢 BUY Order: Using {pct*100:.0f}% = ${spend:.2f}")
+    print(f"🟢 BUY Order Triggered: {pct*100:.0f}% = ${spend:.2f}")
     # Uncomment to execute live:
     # price = k.get_ticker_information(PAIR).ask[0]
     # volume = spend / price
@@ -51,7 +51,7 @@ def place_buy_order(pct, fiat):
 
 def place_sell_order(pct, btc):
     amount = btc * pct
-    print(f"🔴 SELL Order: Selling {pct*100:.0f}% = {amount:.6f} BTC")
+    print(f"🔴 SELL Order Triggered: {pct*100:.0f}% = {amount:.6f} BTC")
     # Uncomment to execute live:
     # k.add_standard_order(pair=PAIR, type='sell', ordertype='market', volume=amount)
 
@@ -68,8 +68,9 @@ def main():
             now = datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S')
             print(f"\n{now} | RSI: {rsi:.2f} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
 
+            # === BUY SECTION ===
             if rsi <= MIN_RSI_FOR_MANUAL:
-                print(f"⚠️ RSI below {MIN_RSI_FOR_MANUAL} — manual buy zone")
+                print(f"⚠️ RSI dropped below {MIN_RSI_FOR_MANUAL} — manual buy zone")
 
             elif rsi <= BUY_LADDER[0][0] and fiat > 0:
                 for level, pct in BUY_LADDER:
@@ -79,6 +80,7 @@ def main():
                         last_buy_rsi = rsi
                         break
 
+            # === SELL SECTION ===
             elif rsi >= SELL_LADDER[0][0] and btc > 0:
                 for level, pct in SELL_LADDER:
                     if rsi >= level:
@@ -92,5 +94,5 @@ def main():
         time.sleep(1)  # 1-second interval
 
 if __name__ == "__main__":
-    print("🔁 SlateBot v12 live. No sleep. Constant RSI scan.")
+    print("🔁 SlateBot v12 started. Monitoring RSI every 1s...")
     main()
