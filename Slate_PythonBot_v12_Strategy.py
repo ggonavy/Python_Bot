@@ -1,54 +1,92 @@
-import time import pandas as pd from ta.momentum import RSIIndicator from datetime import datetime from pytz import timezone import krakenex from pykrakenapi import KrakenAPI
+import time
+import pandas as pd
+from ta.momentum import RSIIndicator
+from datetime import datetime
+from pytz import timezone
+import krakenex
+from pykrakenapi import KrakenAPI
 
-=== CONFIGURATION ===
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM" API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==" PAIR = "XBTUSD" ASSET = "XXBT" QUOTE = "ZUSD" TIMEFRAME = 60 # 1-hour candles (Kraken uses minutes) TIMEZONE = 'US/Eastern'
+# === CONFIGURATION ===
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
+PAIR = "XBTUSD"
+ASSET = "XXBT"
+QUOTE = "ZUSD"
+TIMEZONE = 'US/Eastern'
 
-=== STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)] SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)] REBUY_RSI_THRESHOLD = 47 MIN_RSI_FOR_BUY = 0 # allow full manual override at extreme dips
+# === STRATEGY PARAMETERS ===
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # Full fiat at RSI 32
+SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]  # Full BTC out at RSI 85
+REBUY_RSI_THRESHOLD = 47
+MIN_RSI_FOR_MANUAL_BUY = 27  # Still allow buys at or below 27
+last_buy_rsi = 100
 
-last_buy_rsi = 100 # Prevent re-buying until RSI drops below REBUY_RSI_THRESHOLD
+# === KRAKEN SETUP ===
+api = krakenex.API(API_KEY, API_SECRET)
+k = KrakenAPI(api)
 
-def get_kraken_balance(api): balance = api.get_account_balance() fiat = float(balance.get(QUOTE, 0)) btc = float(balance.get(ASSET, 0)) return fiat, btc
+def get_ohlc_data():
+    df, _ = k.get_ohlc_data(PAIR, interval=60)  # 1H timeframe
+    return df
 
-def place_buy_order(pct, fiat): usd_to_spend = fiat * pct print(f"\n\U0001F7E2 Buy Order: Using {pct*100:.0f}% of fiat = ${usd_to_spend:.2f}") # Place actual order with Kraken API here (buy market)
+def get_latest_rsi(df):
+    df['rsi'] = RSIIndicator(close=df['close'], window=14).rsi()
+    return df['rsi'].iloc[-1]
 
-def place_sell_order(pct, btc): btc_to_sell = btc * pct print(f"\n\U0001F534 Sell Order: Selling {pct*100:.0f}% of BTC = {btc_to_sell:.6f} BTC") # Place actual order with Kraken API here (sell market)
+def get_balance():
+    balance = k.get_account_balance()
+    fiat = float(balance.get(QUOTE, 0))
+    btc = float(balance.get(ASSET, 0))
+    return fiat, btc
 
-def get_rsi(): df, _ = k.get_ohlc_data(PAIR, interval=TIMEFRAME) df.index.freq = 'min' # Suppress 'T' frequency warning rsi = RSIIndicator(close=df['close'], window=14).rsi() return float(rsi.iloc[-1])
+def place_buy_order(pct, fiat):
+    amount_usd = fiat * pct
+    print(f"💰 Buying BTC with ${amount_usd:.2f}")
+    # api.query_private('AddOrder', {...}) ← Live trade logic here
 
-def main(): global last_buy_rsi api = krakenex.API(API_KEY, API_SECRET) global k k = KrakenAPI(api)
+def place_sell_order(pct, btc):
+    amount_btc = btc * pct
+    print(f"🔻 Selling {amount_btc:.6f} BTC")
+    # api.query_private('AddOrder', {...}) ← Live trade logic here
 
-while True:
-    try:
-        est = timezone(TIMEZONE)
-        now = datetime.now(est).strftime('%Y-%m-%d %H:%M:%S')
-        rsi = get_rsi()
-        fiat, btc = get_kraken_balance(k)
+def main():
+    global last_buy_rsi
+    while True:
+        try:
+            df = get_ohlc_data()
+            rsi = get_latest_rsi(df)
+            fiat, btc = get_balance()
 
-        print(f"\n{now} | RSI: {rsi:.2f} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
+            now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"\n{now} | RSI: {rsi:.2f} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
 
-        if rsi <= BUY_LADDER[-1][0] and fiat > 0:
-            print(f"\U0001F4C9 RSI below {BUY_LADDER[-1][0]}: Full Deploy Mode")
-            place_buy_order(1.00, fiat)
-            last_buy_rsi = rsi
+            # Buy logic
+            if rsi <= REBUY_RSI_THRESHOLD and rsi < last_buy_rsi and fiat > 1:
+                for level, pct in BUY_LADDER:
+                    if rsi <= level:
+                        print(f"✅ Buy Ladder Triggered at RSI {rsi:.2f}")
+                        place_buy_order(pct, fiat)
+                        last_buy_rsi = rsi
+                        break
 
-        elif rsi <= REBUY_RSI_THRESHOLD and rsi < last_buy_rsi and fiat > 0:
-            for level, pct in reversed(BUY_LADDER):
-                if rsi <= level:
-                    print(f"\U0001F7E2 Buy Ladder Triggered at RSI {rsi:.2f}")
-                    place_buy_order(pct, fiat)
-                    last_buy_rsi = rsi
-                    break
+            # Manual buy override
+            elif rsi <= MIN_RSI_FOR_MANUAL_BUY and fiat > 1:
+                print(f"🚨 Deep RSI Manual Buy Override: RSI {rsi:.2f}")
+                place_buy_order(1.0, fiat)
+                last_buy_rsi = rsi
 
-        elif rsi >= SELL_LADDER[0][0] and btc > 0:
-            for level, pct in SELL_LADDER:
-                if rsi >= level:
-                    print(f"\U0001F534 Sell Ladder Triggered at RSI {rsi:.2f}")
-                    place_sell_order(pct, btc)
-                    break
+            # Sell logic
+            elif rsi >= SELL_LADDER[0][0] and btc > 0:
+                for level, pct in SELL_LADDER:
+                    if rsi >= level:
+                        print(f"📤 Sell Ladder Triggered at RSI {rsi:.2f}")
+                        place_sell_order(pct, btc)
+                        break
 
-    except Exception as e:
-        print(f"\n\u274C Error: {e}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
 
-    time.sleep(1)  # ⏱ Check every second
-if name == "main": main()
+        time.sleep(1)  # Check every second
+
+if __name__ == "__main__":
+    main()
