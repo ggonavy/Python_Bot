@@ -30,11 +30,11 @@ api = KrakenAPI(k)
 
 def fetch_ohlcv():
     df, _ = api.get_ohlc_data(PAIR, interval=TIMEFRAME)
-    if df.index.tz is None:
+    try:
         df.index = df.index.tz_localize(TIMEZONE)
-    else:
+    except TypeError:
         df.index = df.index.tz_convert(TIMEZONE)
-    df.index.freq = None  # Fix 'T' deprecation warning
+    df.index.freq = None
     return df
 
 def get_rsi(df):
@@ -64,7 +64,7 @@ def execute_sell(percent, btc_balance):
     api.add_standard_order(PAIR, 'sell', 'market', volume)
     print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] 🔻 SELL {volume} BTC at ${price:.2f}")
 
-# === MAIN LOOP (throttled to avoid rate limits) ===
+# === MAIN LOOP (throttled) ===
 while True:
     try:
         df = fetch_ohlcv()
@@ -103,6 +103,5 @@ while True:
 
     except Exception as e:
         print(f"❌ Error: {e}")
-    
-    # ✅ Add a short delay to prevent Kraken rate limit errors
-    time.sleep(5)
+
+    time.sleep(5)  # prevent Kraken rate-limit crash
