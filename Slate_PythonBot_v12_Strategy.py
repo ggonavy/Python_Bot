@@ -1,3 +1,4 @@
+
 import time
 import pandas as pd
 from ta.momentum import RSIIndicator
@@ -16,8 +17,8 @@ TIMEFRAME = 60  # 1-hour candles
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # Buy 100% at RSI 32
-SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]  # Sell ladder
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
+SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 REBUY_RSI_THRESHOLD = 47
 MIN_RSI_FOR_BUY = 27
 last_buy_rsi = 100
@@ -56,7 +57,6 @@ def main():
             now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
             print(f"{now} | RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.6f}")
 
-            # === BUY LOGIC ===
             if rsi <= BUY_LADDER[-1][0] and fiat > 0:
                 print(f"🟢 RSI {rsi} ≤ {BUY_LADDER[-1][0]} → FULL BUY")
                 place_buy_order(1.0, fiat)
@@ -69,7 +69,6 @@ def main():
                         last_buy_rsi = rsi
                         break
 
-            # === SELL LOGIC ===
             elif rsi >= SELL_LADDER[0][0] and btc > 0:
                 for level, pct in SELL_LADDER:
                     if rsi >= level:
@@ -80,7 +79,7 @@ def main():
         except Exception as e:
             print(f"❌ Error: {e}")
 
-        time.sleep(1)  # Check every second
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
