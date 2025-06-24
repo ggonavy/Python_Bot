@@ -1,3 +1,4 @@
+import time
 import pandas as pd
 from ta.momentum import RSIIndicator
 from datetime import datetime
@@ -29,8 +30,11 @@ api = KrakenAPI(k)
 
 def fetch_ohlcv():
     df, _ = api.get_ohlc_data(PAIR, interval=TIMEFRAME)
-    df.index.freq = None  # fix for 'T' is deprecated warning
-    df = df.tz_convert(TIMEZONE)
+    if df.index.tz is None:
+        df.index = df.index.tz_localize(TIMEZONE)
+    else:
+        df.index = df.index.tz_convert(TIMEZONE)
+    df.index.freq = None  # Fix 'T' deprecation warning
     return df
 
 def get_rsi(df):
@@ -60,7 +64,7 @@ def execute_sell(percent, btc_balance):
     api.add_standard_order(PAIR, 'sell', 'market', volume)
     print(f"[{datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')}] 🔻 SELL {volume} BTC at ${price:.2f}")
 
-# === MAIN LOOP (No sleep - executes nonstop) ===
+# === MAIN LOOP (throttled to avoid rate limits) ===
 while True:
     try:
         df = fetch_ohlcv()
@@ -81,7 +85,6 @@ while True:
                     last_buy_rsi = current_rsi
                     break
 
-        # === EXTREME DIP OVERRIDE ===
         if current_rsi <= MIN_RSI_OVERRIDE and fiat_balance > 5:
             print("⚠️ RSI extremely low. FORCING full fiat deployment.")
             execute_buy(1.0, fiat_balance)
@@ -100,3 +103,6 @@ while True:
 
     except Exception as e:
         print(f"❌ Error: {e}")
+    
+    # ✅ Add a short delay to prevent Kraken rate limit errors
+    time.sleep(5)
