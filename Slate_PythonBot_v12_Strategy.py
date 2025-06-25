@@ -19,7 +19,7 @@ TIMEZONE = 'US/Eastern'
 # === STRATEGY PARAMETERS ===
 BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
-REBUY_RSI_THRESHOLD = 47  # still the top rebuy gate
+REBUY_RSI_THRESHOLD = 47  # Rebuy zone gate
 
 # === KRAKEN CONNECTION ===
 k = krakenex.API(API_KEY, API_SECRET)
@@ -62,7 +62,7 @@ def run_bot():
             df = get_ohlcv(PAIR, TIMEFRAME)
             rsi = get_rsi(df)
 
-            if step % 3 == 0:  # every 3 seconds
+            if step % 3 == 0:
                 fiat, btc = get_balances()
 
             now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
@@ -95,7 +95,4 @@ def run_bot():
             print(f"[ERROR] Bot loop failed: {e}")
 
         step += 1
-        time.sleep(1)  # 🔁 runs every second
-
-# === START BOT ===
-run_bot()
+        time.sleep(1.2)  # ✅ Throttle-safe loop
