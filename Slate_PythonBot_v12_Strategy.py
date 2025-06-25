@@ -19,7 +19,7 @@ TIMEZONE = 'US/Eastern'
 # === STRATEGY PARAMETERS ===
 BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
-REBUY_RSI_THRESHOLD = 47  # Rebuy zone gate
+REBUY_RSI_THRESHOLD = 47
 
 # === KRAKEN CONNECTION ===
 k = krakenex.API(API_KEY, API_SECRET)
@@ -40,10 +40,15 @@ def get_rsi(df, period=14):
     return rsi.iloc[-1]
 
 def get_balances():
-    balances = kraken.get_account_balance()
-    fiat = float(balances.get(QUOTE, 0))
-    btc = float(balances.get(ASSET, 0))
-    return fiat, btc
+    try:
+        balances = kraken.get_account_balance()
+        print(f"[DEBUG] Full Kraken balance snapshot:\n{balances}")  # <-- debug line
+        fiat = float(balances.get(QUOTE, 0))
+        btc = float(balances.get(ASSET, 0))
+        return fiat, btc
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch balances: {e}")
+        return 0, 0
 
 def place_market_order(pair, type_, volume):
     try:
@@ -95,4 +100,4 @@ def run_bot():
             print(f"[ERROR] Bot loop failed: {e}")
 
         step += 1
-        time.sleep(1.2)  # ✅ Throttle-safe loop
+        time.sleep(1.2)  # Throttle-safe
