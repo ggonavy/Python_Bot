@@ -13,14 +13,13 @@ API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYo
 PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
-TIMEFRAME = 60  # 1-hour candles
+TIMEFRAME = 60
 TIMEZONE = 'US/Eastern'
 
 # === STRATEGY PARAMETERS ===
-BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]  # Use 100% fiat at RSI 32+
-SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]  # Sell all BTC by RSI 85
-REBUY_RSI_THRESHOLD = 47  # No rebuy until RSI falls to this or lower
-last_buy_rsi = 100  # Start at a neutral high
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
+SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
+REBUY_RSI_THRESHOLD = 47  # still the top rebuy gate
 
 # === KRAKEN CONNECTION ===
 k = krakenex.API(API_KEY, API_SECRET)
@@ -37,7 +36,7 @@ def get_ohlcv(pair, interval):
     return df
 
 def get_rsi(df, period=14):
-    rsi = RSIIndicator(df['close'], window=period).rsi()
+    rsi = RSIIndicator(df['close'], window=14).rsi()
     return rsi.iloc[-1]
 
 def get_balances():
@@ -48,38 +47,40 @@ def get_balances():
 
 def place_market_order(pair, type_, volume):
     try:
-        response = kraken.add_standard_order(pair=pair, type=type_, ordertype='market', volume=volume)
-        print(f"✅ Order executed: {type_.upper()} {volume} {ASSET}")
+        kraken.add_standard_order(pair=pair, type=type_, ordertype='market', volume=volume)
+        print(f"✅ Order executed: {type_.upper()} {volume:.6f} {ASSET}")
     except Exception as e:
         print(f"❌ Order error: {e}")
 
+# === MAIN BOT LOOP ===
 def run_bot():
-    global last_buy_rsi
+    step = 0
+    fiat, btc = 0, 0
+
     while True:
         try:
             df = get_ohlcv(PAIR, TIMEFRAME)
             rsi = get_rsi(df)
-            fiat, btc = get_balances()
-            now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
 
-            print(f"[{now}] RSI: {rsi:.2f} | FIAT: {fiat:.2f} | BTC: {btc:.6f}")
+            if step % 3 == 0:  # every 3 seconds
+                fiat, btc = get_balances()
+
+            now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"[{now}] RSI: {rsi:.2f} | FIAT: ${fiat:.2f} | BTC: {btc:.6f}")
 
             # === BUY LOGIC ===
             if fiat > 5:
                 if rsi <= 27:
                     place_market_order(PAIR, 'buy', fiat / df['close'].iloc[-1])
-                    last_buy_rsi = rsi
                 elif rsi <= 32:
                     place_market_order(PAIR, 'buy', fiat / df['close'].iloc[-1])
-                    last_buy_rsi = rsi
-                elif rsi <= REBUY_RSI_THRESHOLD and rsi < last_buy_rsi:
+                elif rsi <= REBUY_RSI_THRESHOLD:
                     for threshold, pct in BUY_LADDER:
                         if rsi <= threshold:
                             amount = fiat * pct
                             if amount > 5:
                                 place_market_order(PAIR, 'buy', amount / df['close'].iloc[-1])
-                                last_buy_rsi = rsi
-                                break
+                            break
 
             # === SELL LOGIC ===
             if btc > 0.0001:
@@ -91,8 +92,10 @@ def run_bot():
                         break
 
         except Exception as e:
-            print(f"Bot error: {e}")
-        time.sleep(1)
+            print(f"[ERROR] Bot loop failed: {e}")
+
+        step += 1
+        time.sleep(1)  # 🔁 runs every second
 
 # === START BOT ===
 run_bot()
