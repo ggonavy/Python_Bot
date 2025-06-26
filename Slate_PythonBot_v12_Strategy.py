@@ -71,7 +71,6 @@ while True:
         # --- BUY LOGIC ---
         if fiat > 0:
             if rsi <= REBUY_RSI_THRESHOLD:
-                # Buy all remaining fiat
                 print(f"RSI {rsi} <= {REBUY_RSI_THRESHOLD}: Buying all remaining fiat: ${fiat:.2f}")
                 execute_trade('buy', fiat, is_quote=True)
                 bought_levels.clear()
