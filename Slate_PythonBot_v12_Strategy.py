@@ -1,3 +1,6 @@
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 import time
 from datetime import datetime
 from pytz import timezone
@@ -98,12 +101,12 @@ while True:
                 execute_trade('sell', amount)
                 sold_levels.add('ALL')
 
-        # Reset buy/sell levels when RSI drops below threshold
+        # Reset levels when RSI drops below threshold
         if rsi < REBUY_RSI_THRESHOLD:
             bought_levels.clear()
             sold_levels.clear()
 
-        # Wait 20 seconds before next iteration
+        # Wait 20 seconds before next check
         time.sleep(20)
 
     except Exception as e:
