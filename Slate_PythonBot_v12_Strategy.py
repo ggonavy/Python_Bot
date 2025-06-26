@@ -68,6 +68,9 @@ while True:
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
 
+        # Debug info for RSI and levels
+        print(f"DEBUG: RSI={rsi}, bought_levels={bought_levels}, sold_levels={sold_levels}")
+
         # --- BUY LOGIC ---
         if fiat > 0:
             if rsi <= REBUY_RSI_THRESHOLD:
@@ -79,7 +82,7 @@ while True:
                 for level, percent in BUY_LADDER:
                     if rsi <= level and level not in bought_levels:
                         amount = initial_fiat_total * percent
-                        print(f"Buying {percent*100:.0f}% of total fiat: ${amount:.2f} at RSI {rsi}")
+                        print(f"DEBUG: Check buy level {level}, RSI={rsi}, buying ${amount:.2f}")
                         execute_trade('buy', amount, is_quote=True)
                         bought_levels.add(level)
                         break
@@ -89,7 +92,7 @@ while True:
             for level, percent in SELL_LADDER:
                 if rsi >= level and level not in sold_levels:
                     amount = btc * percent
-                    print(f"Selling {percent*100:.0f}% of BTC: {amount:.8f} at RSI {rsi}")
+                    print(f"DEBUG: Check sell level {level}, RSI={rsi}, selling {amount:.8f}")
                     execute_trade('sell', amount)
                     sold_levels.add(level)
                     break
@@ -102,10 +105,11 @@ while True:
 
         # Reset levels when RSI drops below threshold
         if rsi < REBUY_RSI_THRESHOLD:
+            print("RSI dropped below threshold, clearing buy/sell levels for re-triggering.")
             bought_levels.clear()
             sold_levels.clear()
 
-        # Wait 20 seconds before next check
+        # Wait 20 seconds
         time.sleep(20)
 
     except Exception as e:
