@@ -19,7 +19,7 @@ BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30)]  # RSI thresholds and % of tot
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]  # RSI thresholds and % of BTC
 REBUY_RSI_THRESHOLD = 47
 
-# === INITIALIZE ===
+# === INITIALS ===
 initial_fiat_total = 100  # Your total fiat amount
 last_buy_rsi = 100
 bought_levels = set()
@@ -30,7 +30,7 @@ api = krakenex.API(API_KEY, API_SECRET)
 k = KrakenAPI(api)
 
 def get_rsi():
-    ohlc, _ = k.get_ohlc_data(PAIR, interval=1)  # 1-minute interval for better RSI calculation
+    ohlc, _ = k.get_ohlc_data(PAIR, interval=1)  # 1-minute interval
     close_prices = ohlc['close']
     rsi = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
     return round(rsi, 2)
@@ -65,13 +65,13 @@ while True:
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
 
-        # === BUY LOGIC ===
+        # --- BUY LOGIC ---
         if fiat > 0:
             if rsi <= REBUY_RSI_THRESHOLD:
                 # Buy all remaining fiat
                 print(f"RSI {rsi} <= {REBUY_RSI_THRESHOLD}: Buying all remaining fiat: ${fiat:.2f}")
                 execute_trade('buy', fiat, is_quote=True)
-                bought_levels.clear()  # reset buy levels after big buy
+                bought_levels.clear()
                 last_buy_rsi = rsi
             else:
                 for level, percent in BUY_LADDER:
@@ -82,7 +82,7 @@ while True:
                         bought_levels.add(level)
                         break
 
-        # === SELL LOGIC ===
+        # --- SELL LOGIC ---
         if btc > 0:
             for level, percent in SELL_LADDER:
                 if rsi >= level and level not in sold_levels:
@@ -98,13 +98,13 @@ while True:
                 execute_trade('sell', amount)
                 sold_levels.add('ALL')
 
-        # Reset buy/sell levels when RSI crosses back below 47
+        # Reset buy/sell levels when RSI drops below threshold
         if rsi < REBUY_RSI_THRESHOLD:
             bought_levels.clear()
             sold_levels.clear()
 
-        # Wait 15 seconds before next check
-        time.sleep(15)
+        # Wait 20 seconds before next iteration
+        time.sleep(20)
 
     except Exception as e:
         print(f"Error: {e}")
