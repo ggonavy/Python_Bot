@@ -53,10 +53,10 @@ def execute_trade(order_type, volume, is_quote=False):
             'volume': str(volume)
         }
         if is_quote and order_type == 'buy':
-            # For quoting currency, use oflags
-            params['oflags'] = 'viqc'
+            # Use oflags to specify quote currency volume
+            params['oflags'] = 'viqc'  # Volume in quote currency
         response = k.query_private('AddOrder', params)
-        print(f"Order Response: {response}")
+        print(f"\n--- Order Response ---\n{response}\n")
         if response.get('error'):
             print(f"Error placing {order_type} order: {response['error']}")
         else:
@@ -71,7 +71,7 @@ while True:
         rsi = get_rsi()
         fiat, btc = get_balances()
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
+        print(f"\n[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
 
         # --- BUY LOGIC ---
         if fiat > 0:
@@ -83,12 +83,11 @@ while True:
             else:
                 for level, percent in BUY_LADDER:
                     if rsi <= level and level not in bought_levels:
-                        # Convert fiat amount to BTC at current market price
-                        # Fetch current price for accurate conversion
+                        # Convert fiat to BTC based on current market price
                         ticker = k.get_ticker(PAIR)
                         current_price = float(ticker['last'])
                         amount_btc = (initial_fiat_total * percent) / current_price
-                        print(f"DEBUG: Buy level {level}, RSI={rsi}, buying {amount_btc:.8f} BTC")
+                        print(f"DEBUG: Buy level {level}, RSI={rsi}, buying {amount_btc:.8f} BTC at price {current_price}")
                         execute_trade('buy', amount_btc)
                         bought_levels.add(level)
                         break
