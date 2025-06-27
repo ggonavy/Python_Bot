@@ -11,7 +11,7 @@ import pandas as pd
 
 # === CONFIGURATION ===
 API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
-API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q"
 PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
@@ -53,11 +53,16 @@ def execute_trade(order_type, volume, is_quote=False):
             'volume': str(volume)
         }
         if is_quote and order_type == 'buy':
-            params['oflags'] = 'viqc'  # Volume in quote currency
-        k.query_private('AddOrder', params)
-        print(f"Placed {order_type} order for {volume:.8f} {'USD' if is_quote else 'BTC'}")
+            # For quoting currency, use oflags
+            params['oflags'] = 'viqc'
+        response = k.query_private('AddOrder', params)
+        print(f"Order Response: {response}")
+        if response.get('error'):
+            print(f"Error placing {order_type} order: {response['error']}")
+        else:
+            print(f"Successfully placed {order_type} order for {volume:.8f} {'USD' if is_quote else 'BTC'}")
     except Exception as e:
-        print(f"Trade Error: {e}")
+        print(f"Trade Exception: {e}")
 
 print("Starting trading bot...")
 
@@ -67,9 +72,6 @@ while True:
         fiat, btc = get_balances()
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
-
-        # Debug info for RSI and levels
-        print(f"DEBUG: RSI={rsi}, bought_levels={bought_levels}, sold_levels={sold_levels}")
 
         # --- BUY LOGIC ---
         if fiat > 0:
@@ -81,9 +83,13 @@ while True:
             else:
                 for level, percent in BUY_LADDER:
                     if rsi <= level and level not in bought_levels:
-                        amount = initial_fiat_total * percent
-                        print(f"DEBUG: Check buy level {level}, RSI={rsi}, buying ${amount:.2f}")
-                        execute_trade('buy', amount, is_quote=True)
+                        # Convert fiat amount to BTC at current market price
+                        # Fetch current price for accurate conversion
+                        ticker = k.get_ticker(PAIR)
+                        current_price = float(ticker['last'])
+                        amount_btc = (initial_fiat_total * percent) / current_price
+                        print(f"DEBUG: Buy level {level}, RSI={rsi}, buying {amount_btc:.8f} BTC")
+                        execute_trade('buy', amount_btc)
                         bought_levels.add(level)
                         break
 
@@ -91,16 +97,15 @@ while True:
         if btc > 0:
             for level, percent in SELL_LADDER:
                 if rsi >= level and level not in sold_levels:
-                    amount = btc * percent
-                    print(f"DEBUG: Check sell level {level}, RSI={rsi}, selling {amount:.8f}")
-                    execute_trade('sell', amount)
+                    amount_btc = btc * percent
+                    print(f"DEBUG: Check sell level {level}, RSI={rsi}, selling {amount_btc:.8f} BTC")
+                    execute_trade('sell', amount_btc)
                     sold_levels.add(level)
                     break
             # Special case: RSI >= 85, sell all remaining BTC
             if rsi >= 85 and 'ALL' not in sold_levels:
-                amount = btc
-                print(f"RSI {rsi} >= 85: Selling all remaining BTC: {amount:.8f}")
-                execute_trade('sell', amount)
+                print(f"RSI {rsi} >= 85: Selling all remaining BTC: {btc:.8f}")
+                execute_trade('sell', btc)
                 sold_levels.add('ALL')
 
         # Reset levels when RSI drops below threshold
