@@ -31,7 +31,7 @@ REBUY_RSI_THRESHOLD = 47
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30)]
 
-# Pre-calculate levels
+# Pre-calculate levels for buy and sell
 buy_levels_amounts = [(lvl, initial_fiat_amount * pct) for lvl, pct in BUY_LADDER]
 sell_levels_btc = [(lvl, initial_total_btc * pct) for lvl, pct in SELL_LADDER]
 
@@ -78,7 +78,7 @@ def execute_trade(order_type, volume):
     except Exception as e:
         print(f"Trade error: {e}")
 
-print("Bot started.")
+print("Trading bot started.")
 while True:
     try:
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
