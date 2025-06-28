@@ -47,8 +47,8 @@ def get_rsi():
     try:
         ohlc, _ = k.get_ohlc_data(PAIR, interval=1)
         close_prices = ohlc['close']
-        rsi = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
-        return round(rsi, 2)
+        rsi_value = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
+        return round(rsi_value, 2)
     except Exception as e:
         print(f"RSI fetch error: {e}")
         return None
@@ -56,13 +56,14 @@ def get_rsi():
 def get_balances():
     try:
         balances = k.get_account_balance()
-        print("Full balances response:", balances)  # Debug: see all balances
+        # Debug: print the entire balances response
+        print("Full balances response:", balances)
         fiat = float(balances.get(QUOTE, 0))
         btc = float(balances.get(ASSET, 0))
         return fiat, btc
     except Exception as e:
         print(f"Balance fetch error: {e}")
-        return 0, 0
+        return 0.0, 0.0
 
 def execute_trade(order_type, volume, is_quote=False):
     try:
@@ -95,13 +96,12 @@ while True:
         # Show current balances and RSI
         print(f"[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
 
-        # --- SIGNALS AND TRADES ---
-
-        # Check for buy signals
+        # --- BUY LOGIC ---
         if fiat > 1:
             print(f"Available fiat: ${fiat:.2f}")
             if rsi is not None:
                 if rsi <= 32:
+                    # Buy all fiat
                     print(f"RSI {rsi} <= {BUY_RSI_THRESHOLD} - Buying all fiat ${fiat:.2f}")
                     execute_trade('buy', fiat, is_quote=True)
                     bought_levels.clear()
@@ -120,7 +120,7 @@ while True:
             else:
                 print("RSI fetch failed, skipping buy signals.")
 
-        # Check for sell signals
+        # --- SELL LOGIC ---
         if btc > 0.0001:
             print(f"Available BTC: {btc:.8f}")
             for level, btc_amount in sell_levels_btc:
@@ -138,7 +138,7 @@ while True:
         else:
             print("No BTC to sell.")
 
-        # Reset levels if RSI drops below buy threshold
+        # --- RESET levels ---
         if rsi is not None and rsi < REBUY_RSI_THRESHOLD:
             if bought_levels or sold_levels:
                 print("RSI below threshold, resetting levels.")
