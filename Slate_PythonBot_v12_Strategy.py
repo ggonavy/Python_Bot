@@ -1,5 +1,5 @@
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category='FutureWarning')
 
 import time
 from datetime import datetime
@@ -9,8 +9,8 @@ from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
 
 # --- CONFIGURE YOUR API KEYS ---
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"       # <-- Paste your Kraken API key
-API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==" # <-- Paste your Kraken API secret
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
 
 # --- INIT API ---
 api = krakenex.API()
@@ -56,7 +56,7 @@ def get_rsi():
 def get_balances():
     try:
         balances = k.get_account_balance()
-        print("Full balances response:", balances)
+        print("Full balances response:", balances)  # Debug: see all balances
         fiat = float(balances.get(QUOTE, 0))
         btc = float(balances.get(ASSET, 0))
         return fiat, btc
@@ -86,59 +86,60 @@ print("Starting trading bot...")
 
 while True:
     try:
+        now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
         # Fetch balances
         fiat, btc = get_balances()
         # Fetch RSI
         rsi = get_rsi()
-        now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Show current balances and RSI
         print(f"[{now}] RSI: {rsi} | FIAT: ${fiat:.2f} | BTC: {btc:.8f}")
 
-        if rsi is None:
-            print("RSI fetch failed, retrying...")
-            time.sleep(20)
-            continue
+        # --- SIGNALS AND TRADES ---
 
-        # --- BUY LOGIC ---
+        # Check for buy signals
         if fiat > 1:
-            if rsi <= 32:
-                # Buy all fiat
-                print(f"RSI {rsi} <= {BUY_RSI_THRESHOLD} - Buying all fiat ${fiat:.2f}")
-                execute_trade('buy', fiat, is_quote=True)
-                bought_levels.clear()
-            elif rsi <= 47:
-                # Ladder buy levels
-                for level, dollar_amount in buy_levels_amounts:
-                    if rsi <= level and level not in bought_levels:
-                        ticker = k.get_ticker(PAIR)
-                        current_price = float(ticker['last'])
-                        amount_btc = dollar_amount / current_price
-                        print(f"Buying {amount_btc:.8f} BTC at {current_price} USD (Level {level} RSI)")
-                        execute_trade('buy', amount_btc)
-                        bought_levels.add(level)
-                        break
-            elif rsi > 47:
-                # Reset buy levels if RSI above threshold
-                if bought_levels:
-                    print("RSI above buy levels, resetting buy levels.")
-                bought_levels.clear()
+            print(f"Available fiat: ${fiat:.2f}")
+            if rsi is not None:
+                if rsi <= 32:
+                    print(f"RSI {rsi} <= {BUY_RSI_THRESHOLD} - Buying all fiat ${fiat:.2f}")
+                    execute_trade('buy', fiat, is_quote=True)
+                    bought_levels.clear()
+                elif rsi <= 47:
+                    for level, dollar_amount in buy_levels_amounts:
+                        if rsi <= level and level not in bought_levels:
+                            ticker = k.get_ticker(PAIR)
+                            current_price = float(ticker['last'])
+                            amount_btc = dollar_amount / current_price
+                            print(f"Buying {amount_btc:.8f} BTC at {current_price} USD (Level {level} RSI)")
+                            execute_trade('buy', amount_btc)
+                            bought_levels.add(level)
+                            break
+                else:
+                    print("RSI above buy levels, no buy action.")
+            else:
+                print("RSI fetch failed, skipping buy signals.")
 
-        # --- SELL LOGIC ---
+        # Check for sell signals
         if btc > 0.0001:
-            # Sell fixed BTC amounts at ladder levels
+            print(f"Available BTC: {btc:.8f}")
             for level, btc_amount in sell_levels_btc:
                 if rsi >= level and level not in sold_levels:
                     print(f"Selling {btc_amount:.8f} BTC at RSI {rsi} (Level {level})")
                     execute_trade('sell', btc_amount)
                     sold_levels.add(level)
                     break
+
             # Sell all remaining BTC at RSI >= 85
             if rsi >= 85 and 'ALL' not in sold_levels:
                 print(f"RSI {rsi} >= 85 - Selling all remaining BTC {btc:.8f}")
                 execute_trade('sell', btc)
                 sold_levels.add('ALL')
+        else:
+            print("No BTC to sell.")
 
-        # --- RESET levels ---
-        if rsi < REBUY_RSI_THRESHOLD:
+        # Reset levels if RSI drops below buy threshold
+        if rsi is not None and rsi < REBUY_RSI_THRESHOLD:
             if bought_levels or sold_levels:
                 print("RSI below threshold, resetting levels.")
             bought_levels.clear()
