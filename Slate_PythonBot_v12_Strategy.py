@@ -7,14 +7,12 @@ from pytz import timezone
 import krakenex
 from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
-import pandas as pd
-import logging
 
-# --- CONFIGURE YOUR API KEYS HERE ---
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"      # <-- Paste your Kraken API key
-API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="  # <-- Paste your Kraken API secret
+# --- CONFIGURE YOUR API KEYS ---
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"       # <-- Paste your Kraken API key
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==" # <-- Paste your Kraken API secret
 
-# --- INITIALIZE API ---
+# --- INIT API ---
 api = krakenex.API()
 api.key = API_KEY
 api.secret = API_SECRET
@@ -31,12 +29,9 @@ BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30)]
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 REBUY_RSI_THRESHOLD = 47
 
-# --- INITIAL BALANCE TRACKING ---
-initial_fiat_total = 100
+# --- TRACKING ---
 bought_levels = set()
 sold_levels = set()
-
-# --- FUNCTIONS ---
 
 def get_rsi():
     try:
@@ -72,17 +67,15 @@ def execute_trade(order_type, volume, is_quote=False):
         if response.get('error'):
             print(f"Trade error: {response['error']}")
         else:
-            print(f"Trade executed: {order_type} {volume} {'USD' if is_quote else 'BTC'}")
+            print(f"Trade executed: {order_type} {volume:.8f} {'USD' if is_quote else 'BTC'}")
     except Exception as e:
         print(f"Trade exception: {e}")
-
-# --- MAIN LOOP ---
 
 print("Starting trading bot...")
 
 while True:
     try:
-        # Fetch current balances
+        # Fetch balances
         fiat, btc = get_balances()
         # Fetch RSI
         rsi = get_rsi()
@@ -104,7 +97,6 @@ while True:
             else:
                 for level, percent in BUY_LADDER:
                     if rsi <= level and level not in bought_levels:
-                        # Calculate BTC to buy
                         ticker = k.get_ticker(PAIR)
                         current_price = float(ticker['last'])
                         amount_btc = (fiat * percent) / current_price
