@@ -44,9 +44,10 @@ def get_rsi():
     try:
         ohlc, _ = k.get_ohlc_data(PAIR, interval=1)
         close_prices = ohlc['close']
+        # Convert to float
+        close_prices = close_prices.astype(float)
         # Debug: print last 10 close prices
         print("Recent close prices for RSI calculation:\n", close_prices.tail(10))
-        # Check if prices are reasonable
         print("Price range:", close_prices.min(), "-", close_prices.max())
         rsi_value = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
         print(f"DEBUG: Calculated RSI = {rsi_value}")
@@ -59,7 +60,6 @@ def get_balances():
     try:
         bal_df = k.get_account_balance()
         print(f"Raw balance DataFrame:\n{bal_df}")
-        # Loop through DataFrame rows and match asset codes
         fiat = 0.0
         btc = 0.0
         for index, row in bal_df.iterrows():
@@ -77,9 +77,7 @@ def get_balances():
 
 def get_price():
     try:
-        # Correct: get_ticker() returns a DataFrame
         ticker_df = k.get_ticker(PAIR)
-        # 'c' column is a list; first element is last trade price
         last_price = float(ticker_df['c'][0])
         return last_price
     except Exception as e:
