@@ -53,10 +53,12 @@ def get_balances():
     try:
         bal_df = k.get_account_balance()
         print(f"Raw balance DataFrame:\n{bal_df}")
+        # bal_df is a DataFrame with index as asset codes
         fiat = 0.0
         btc = 0.0
+        # Look for your assets in the index
         for index, row in bal_df.iterrows():
-            asset_code = row['asset']
+            asset_code = index  # index is asset code
             volume = float(row['vol'])
             if asset_code == QUOTE:
                 fiat = volume
@@ -70,9 +72,9 @@ def get_balances():
 
 def get_price():
     try:
-        # get_ticker() returns a DataFrame with a row for the pair
+        # get_ticker() returns a DataFrame
         ticker_df = k.get_ticker(PAIR)
-        # Extract the 'c' column, which is a list, first element is last trade price
+        # Extract the last trade price from 'c' column
         last_price = float(ticker_df['c'][0])
         return last_price
     except Exception as e:
@@ -98,8 +100,11 @@ print("Trading bot started.")
 while True:
     try:
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+        # fetch balances
         fiat, btc = get_balances()
+        # fetch RSI
         rsi = get_rsi()
+        # fetch current price
         current_price = get_price()
 
         print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.8f}")
@@ -128,7 +133,6 @@ while True:
                     execute_trade('sell', btc_amount)
                     sold_levels.add(level)
                     break
-            # Sell all remaining BTC at RSI >= 85
             if rsi >= 85 and 'ALL' not in sold_levels:
                 print(f"RSI {rsi} >= 85 - Selling all remaining BTC {btc:.8f}")
                 execute_trade('sell', btc)
