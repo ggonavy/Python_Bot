@@ -7,6 +7,7 @@ from pytz import timezone
 import krakenex
 from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
+import logging
 
 # --- CONFIG ---
 API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"        # Replace with your Kraken API key
@@ -16,13 +17,15 @@ ASSET = "XXBT"
 QUOTE = "ZUSD"
 TIMEZONE = 'US/Eastern'
 
-# --- INIT API ---
+# --- SETUP ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+
 api = krakenex.API()
 api.key = API_KEY
 api.secret = API_SECRET
 k = KrakenAPI(api)
 
-# --- STRATEGY PARAMETERS ---
+# --- STRATEGY ---
 initial_fiat_amount = 100
 initial_total_btc = 10
 
@@ -31,17 +34,22 @@ REBUY_RSI_THRESHOLD = 47
 SELL_LADDER = [(73, 0.40), (77, 0.30), (81, 0.20), (85, 0.10)]
 BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30)]
 
-# Pre-calculate levels for buy and sell
 buy_levels_amounts = [(lvl, initial_fiat_amount * pct) for lvl, pct in BUY_LADDER]
 sell_levels_btc = [(lvl, initial_total_btc * pct) for lvl, pct in SELL_LADDER]
 
 bought_levels = set()
 sold_levels = set()
 
+# --- Helper functions ---
+
 def get_rsi():
     try:
         ohlc, _ = k.get_ohlc_data(PAIR, interval=1)
         close_prices = ohlc['close']
+        # Debug: print last 10 close prices
+        print("Recent close prices for RSI calculation:\n", close_prices.tail(10))
+        # Check if prices are reasonable
+        print("Price range:", close_prices.min(), "-", close_prices.max())
         rsi_value = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
         print(f"DEBUG: Calculated RSI = {rsi_value}")
         return round(rsi_value, 2)
@@ -53,12 +61,10 @@ def get_balances():
     try:
         bal_df = k.get_account_balance()
         print(f"Raw balance DataFrame:\n{bal_df}")
-        # bal_df is a DataFrame with index as asset codes
         fiat = 0.0
         btc = 0.0
-        # Look for your assets in the index
         for index, row in bal_df.iterrows():
-            asset_code = index  # index is asset code
+            asset_code = index
             volume = float(row['vol'])
             if asset_code == QUOTE:
                 fiat = volume
@@ -72,10 +78,8 @@ def get_balances():
 
 def get_price():
     try:
-        # get_ticker() returns a DataFrame
         ticker_df = k.get_ticker(PAIR)
-        # Extract the last trade price from 'c' column
-        last_price = float(ticker_df['c'][0])
+        last_price = float(ticker_df['c'][0])  # 'c' column is list, first element is last trade price
         return last_price
     except Exception as e:
         print(f"Error fetching price: {e}")
