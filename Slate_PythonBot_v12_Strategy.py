@@ -64,8 +64,11 @@ def get_balances():
 
 def get_price():
     try:
-        ticker = k.get_ticker(PAIR)
-        return float(ticker['last'])
+        # Correct method: get_ticker_information
+        ticker_info = k.get_ticker_information(PAIR)
+        # 'last' price is inside 'result' dict under the pair key
+        last_price = float(ticker_info.result[PAIR]['c'][0])
+        return last_price
     except Exception as e:
         print(f"Error fetching price: {e}")
         return None
