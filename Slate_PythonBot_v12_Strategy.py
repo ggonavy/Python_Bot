@@ -9,8 +9,8 @@ from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
 
 # --- CONFIG ---
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"
-API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"  # Replace with your Kraken API key
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="  # Replace with your Kraken API secret
 PAIR = "XBTUSD"
 ASSET = "XXBT"
 QUOTE = "ZUSD"
@@ -22,7 +22,7 @@ api.key = API_KEY
 api.secret = API_SECRET
 k = KrakenAPI(api)
 
-# --- STRATEGY ---
+# --- STRATEGY PARAMETERS ---
 initial_fiat_amount = 100
 initial_total_btc = 10
 
@@ -44,23 +44,30 @@ def get_rsi():
         close_prices = ohlc['close']
         rsi = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
         return round(rsi, 2)
-    except:
+    except Exception as e:
+        print(f"Error fetching RSI: {e}")
         return None
 
 def get_balances():
     try:
         bal = k.get_account_balance()
+        # Debug print to see raw balance data
+        print(f"Raw balance data: {bal}")
         fiat = float(bal.get(QUOTE, 0))
         btc = float(bal.get(ASSET, 0))
+        # Debug print to verify fetched balances
+        print(f"Fetched balances - Fiat: {fiat}, BTC: {btc}")
         return fiat, btc
-    except:
+    except Exception as e:
+        print(f"Error fetching balances: {e}")
         return 0, 0
 
 def get_price():
     try:
         ticker = k.get_ticker(PAIR)
         return float(ticker['last'])
-    except:
+    except Exception as e:
+        print(f"Error fetching price: {e}")
         return None
 
 def execute_trade(order_type, volume):
@@ -72,11 +79,11 @@ def execute_trade(order_type, volume):
             'volume': str(volume)
         })
         if response.get('error'):
-            print(f"Error: {response['error']}")
+            print(f"Trade error: {response['error']}")
         else:
             print(f"{order_type.capitalize()} {volume:.8f} BTC executed.")
     except Exception as e:
-        print(f"Trade error: {e}")
+        print(f"Trade exception: {e}")
 
 print("Trading bot started.")
 while True:
@@ -85,16 +92,19 @@ while True:
         fiat, btc = get_balances()
         rsi = get_rsi()
         current_price = get_price()
+
+        # Log current status
         print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.8f}")
 
         # --- BUY LOGIC ---
         if fiat > 1 and rsi is not None:
             if rsi <= BUY_RSI_THRESHOLD:
                 # Buy all fiat
-                print(f"RSI {rsi} <= {BUY_RSI_THRESHOLD} - Buying all fiat ${fiat:.2f}")
-                execute_trade('buy', fiat / current_price)
+                amount_btc = fiat / current_price
+                print(f"RSI {rsi} <= {BUY_RSI_THRESHOLD} - Buying all fiat ${fiat:.2f} ({amount_btc:.8f} BTC)")
+                execute_trade('buy', amount_btc)
                 bought_levels.clear()
-            elif rsi <= 47:
+            elif rsi <= REBUY_RSI_THRESHOLD:
                 for level, dollar_amount in buy_levels_amounts:
                     if rsi <= level and level not in bought_levels:
                         amount_btc = dollar_amount / current_price
@@ -117,7 +127,7 @@ while True:
                 execute_trade('sell', btc)
                 sold_levels.add('ALL')
 
-        # --- RESET ---
+        # --- RESET LEVELS ---
         if rsi is not None and rsi < REBUY_RSI_THRESHOLD:
             if bought_levels or sold_levels:
                 print("RSI below threshold, resetting levels.")
@@ -127,5 +137,5 @@ while True:
         time.sleep(20)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in main loop: {e}")
         time.sleep(30)
