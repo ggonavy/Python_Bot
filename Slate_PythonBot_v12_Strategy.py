@@ -7,7 +7,6 @@ from pytz import timezone
 import krakenex
 from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
-import logging
 
 # --- CONFIG ---
 API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"        # Replace with your Kraken API key
@@ -18,8 +17,7 @@ QUOTE = "ZUSD"
 TIMEZONE = 'US/Eastern'
 
 # --- SETUP ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
-
+warnings.simplefilter(action='ignore', category=FutureWarning)
 api = krakenex.API()
 api.key = API_KEY
 api.secret = API_SECRET
@@ -61,6 +59,7 @@ def get_balances():
     try:
         bal_df = k.get_account_balance()
         print(f"Raw balance DataFrame:\n{bal_df}")
+        # Loop through DataFrame rows and match asset codes
         fiat = 0.0
         btc = 0.0
         for index, row in bal_df.iterrows():
@@ -78,8 +77,10 @@ def get_balances():
 
 def get_price():
     try:
+        # Correct: get_ticker() returns a DataFrame
         ticker_df = k.get_ticker(PAIR)
-        last_price = float(ticker_df['c'][0])  # 'c' column is list, first element is last trade price
+        # 'c' column is a list; first element is last trade price
+        last_price = float(ticker_df['c'][0])
         return last_price
     except Exception as e:
         print(f"Error fetching price: {e}")
