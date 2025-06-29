@@ -51,10 +51,8 @@ def get_rsi():
 
 def get_balances():
     try:
-        # get account balances returns a DataFrame with 'asset' and 'vol' columns
         bal_df = k.get_account_balance()
         print(f"Raw balance DataFrame:\n{bal_df}")
-        # extract balances from DataFrame
         fiat = 0.0
         btc = 0.0
         for index, row in bal_df.iterrows():
@@ -72,8 +70,9 @@ def get_balances():
 
 def get_price():
     try:
-        # get_ticker() returns a DataFrame, get the first row's 'c' column for last price
+        # get_ticker() returns a DataFrame with a row for the pair
         ticker_df = k.get_ticker(PAIR)
+        # Extract the 'c' column, which is a list, first element is last trade price
         last_price = float(ticker_df['c'][0])
         return last_price
     except Exception as e:
@@ -103,7 +102,6 @@ while True:
         rsi = get_rsi()
         current_price = get_price()
 
-        # Print current status
         print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.8f}")
 
         # --- BUY LOGIC ---
@@ -144,7 +142,6 @@ while True:
             sold_levels.clear()
 
         time.sleep(20)
-
     except Exception as e:
         print(f"Error in main loop: {e}")
         time.sleep(30)
