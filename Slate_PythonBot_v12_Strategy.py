@@ -9,7 +9,7 @@ from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
 
 # --- CONFIG ---
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"  # Replace with your Kraken API key
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"        # Replace with your Kraken API key
 API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="  # Replace with your Kraken API secret
 PAIR = "XBTUSD"
 ASSET = "XXBT"
@@ -42,20 +42,28 @@ def get_rsi():
     try:
         ohlc, _ = k.get_ohlc_data(PAIR, interval=1)
         close_prices = ohlc['close']
-        rsi = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
-        return round(rsi, 2)
+        rsi_value = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
+        print(f"DEBUG: Calculated RSI = {rsi_value}")
+        return round(rsi_value, 2)
     except Exception as e:
         print(f"Error fetching RSI: {e}")
         return None
 
 def get_balances():
     try:
-        bal = k.get_account_balance()
-        # Debug print to see raw balance data
-        print(f"Raw balance data: {bal}")
-        fiat = float(bal.get(QUOTE, 0))
-        btc = float(bal.get(ASSET, 0))
-        # Debug print to verify fetched balances
+        # get account balances returns a DataFrame with 'asset' and 'vol' columns
+        bal_df = k.get_account_balance()
+        print(f"Raw balance DataFrame:\n{bal_df}")
+        # extract balances from DataFrame
+        fiat = 0.0
+        btc = 0.0
+        for index, row in bal_df.iterrows():
+            asset_code = row['asset']
+            volume = float(row['vol'])
+            if asset_code == QUOTE:
+                fiat = volume
+            elif asset_code == ASSET:
+                btc = volume
         print(f"Fetched balances - Fiat: {fiat}, BTC: {btc}")
         return fiat, btc
     except Exception as e:
@@ -64,10 +72,9 @@ def get_balances():
 
 def get_price():
     try:
-        # Correct method: get_ticker_information
-        ticker_info = k.get_ticker_information(PAIR)
-        # 'last' price is inside 'result' dict under the pair key
-        last_price = float(ticker_info.result[PAIR]['c'][0])
+        # get_ticker() returns a DataFrame, get the first row's 'c' column for last price
+        ticker_df = k.get_ticker(PAIR)
+        last_price = float(ticker_df['c'][0])
         return last_price
     except Exception as e:
         print(f"Error fetching price: {e}")
@@ -96,13 +103,12 @@ while True:
         rsi = get_rsi()
         current_price = get_price()
 
-        # Log current status
+        # Print current status
         print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.8f}")
 
         # --- BUY LOGIC ---
         if fiat > 1 and rsi is not None:
             if rsi <= BUY_RSI_THRESHOLD:
-                # Buy all fiat
                 amount_btc = fiat / current_price
                 print(f"RSI {rsi} <= {BUY_RSI_THRESHOLD} - Buying all fiat ${fiat:.2f} ({amount_btc:.8f} BTC)")
                 execute_trade('buy', amount_btc)
