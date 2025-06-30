@@ -15,8 +15,8 @@ PAIR = "XBTUSD"
 TIMEZONE = 'US/Eastern'
 
 # --- INITIAL TOTALS ---
-initial_fiat = 100      # Set your initial fiat amount (e.g., USD)
-initial_btc = 10        # Set your initial BTC amount
+initial_fiat = 100      # Your initial fiat amount (e.g., USD)
+initial_btc = 10        # Your initial BTC amount
 
 # --- SETUP ---
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -34,7 +34,8 @@ sold_all_btc = False  # Flag to indicate full BTC sale
 # --- Helper functions ---
 def get_rsi():
     try:
-        ohlc, _ = k.get_ohlc_data(PAIR, interval=1)
+        # Fetch daily OHLC data (interval=1440 minutes = 1 day)
+        ohlc, _ = k.get_ohlc_data(PAIR, interval=1440)
         close_prices = ohlc['close'].astype(float)
         rsi_value = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
         return round(rsi_value, 2)
@@ -50,7 +51,8 @@ def get_balances():
 
 def get_price():
     try:
-        ticker_df = k.get_ticker(PAIR)  # Use get_ticker() instead of get_ticker_info()
+        # Use get_ticker() instead of get_ticker_info()
+        ticker_df = k.get_ticker(PAIR)
         last_price = float(ticker_df['c'][0])  # 'c' is last trade close price
         return last_price
     except Exception as e:
@@ -73,7 +75,7 @@ def execute_trade(order_type, volume):
         print(f"Trade exception: {e}")
 
 # --- Main loop ---
-print("Starting trading bot...")
+print("Starting trading bot with 1-day timeframe...")
 while True:
     try:
         now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
@@ -81,32 +83,29 @@ while True:
         rsi = get_rsi()
         current_price = get_price()
 
-        # Display current status
+        # Display status
         print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.8f}")
 
-        # --- Reset after full BTC sale ---
+        # Reset after full BTC sale
         if btc < 0.0001 and not sold_all_btc:
             print("All BTC sold. Resetting levels. Waiting for RSI >= 42 to rebuy.")
             sold_all_btc = True
             bought_levels.clear()
             sold_levels.clear()
-            can_buy = True  # Enable rebuy
+            can_buy = True
 
-        # --- Rebuy after full sale ---
+        # Rebuy after full sale
         if btc < 0.0001 and sold_all_btc:
             if rsi is not None and rsi >= 42:
-                # Rebuy with full initial fiat
                 amount_btc = initial_fiat / current_price
                 print(f"RSI {rsi} >= 42 - Rebuying with full initial fiat ${initial_fiat} ({amount_btc:.8f} BTC)")
                 execute_trade('buy', amount_btc)
                 sold_all_btc = False
 
-        # --- Buying logic ---
+        # Buy logic
         if btc < 0.0001 and rsi is not None:
-            # Only buy at RSI 42, 36, or <=30
             if rsi >= 42:
-                # Already handled rebuy above
-                pass
+                pass  # Already handled above
             elif rsi == 42 and '42' not in bought_levels:
                 dollar_amount = initial_fiat * 0.30
                 amount_btc = dollar_amount / current_price
@@ -120,31 +119,26 @@ while True:
                 execute_trade('buy', amount_btc)
                 bought_levels.add('36')
             elif rsi <= 30:
-                # Buy all remaining fiat
                 dollar_amount = fiat
                 amount_btc = dollar_amount / current_price
                 print(f"RSI {rsi} <= 30 - Buying all remaining fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
                 execute_trade('buy', amount_btc)
-                # Reset levels after full buy
                 bought_levels.clear()
 
-        # --- Selling logic ---
+        # Sell logic
         if btc >= 0.0001:
-            # RSI 69: sell 40% of initial BTC
             if rsi >= 69 and '69' not in sold_levels:
                 btc_to_sell = initial_btc * 0.40
                 btc_to_sell = min(btc_to_sell, btc)
                 print(f"RSI {rsi} >= 69 - Selling 40% of initial BTC: {btc_to_sell:.8f}")
                 execute_trade('sell', btc_to_sell)
                 sold_levels.add('69')
-            # RSI 73: sell 30% of initial BTC
             if rsi >= 73 and '73' not in sold_levels:
                 btc_to_sell = initial_btc * 0.30
                 btc_to_sell = min(btc_to_sell, btc)
                 print(f"RSI {rsi} >= 73 - Selling 30% of initial BTC: {btc_to_sell:.8f}")
                 execute_trade('sell', btc_to_sell)
                 sold_levels.add('73')
-            # RSI >= 79: sell all remaining BTC
             if rsi >= 79 and 'ALL' not in sold_levels:
                 print(f"RSI {rsi} >= 79 - Selling all remaining BTC: {btc:.8f}")
                 execute_trade('sell', btc)
