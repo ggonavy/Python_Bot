@@ -50,7 +50,7 @@ def get_balances():
 
 def get_price():
     try:
-        ticker_df = k.get_ticker_info(PAIR)
+        ticker_df = k.get_ticker(PAIR)  # Use get_ticker() instead of get_ticker_info()
         last_price = float(ticker_df['c'][0])  # 'c' is last trade close price
         return last_price
     except Exception as e:
