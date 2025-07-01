@@ -80,9 +80,8 @@ def get_balances():
     """Get current USD and BTC balances."""
     try:
         balance = k.get_account_balance()
-        usd = float(balance.loc["ZUSD"]["vol"]) if "ZUSD" in balance.index else 0.0
-        btc = float(balance.loc["XXBT"]["vol"]) if "XXBT" in balance.index else 0.0
-        return usd, btc, None
+        usd = float(balance.loc["ZUSD"]["vol"]) if "ZUSD" in balance.index else 0.0:
+            return usd, btc, None
     except Exception as e:
         return 0.0, 0.0, f"Balance fetch error: {str(e)}"
 
