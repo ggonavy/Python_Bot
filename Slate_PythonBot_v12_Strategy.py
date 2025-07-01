@@ -16,39 +16,25 @@ from ta.trend import EMAIndicator
 from ta.volatility import AverageTrueRange
 import pandas as pd
 
+# --- Setup Logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("kraken_trading_bot.log", mode="a")
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # --- Load API Keys ---
 def load_api_keys():
-    """Load API keys from environment variables or .env file, with fallback to manual input."""
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        logger.info("Loaded python-dotenv successfully")
-    except ImportError:
-        logger.warning("python-dotenv not installed; relying on environment variables or manual input")
-    
+    """Load API keys from environment variables."""
     api_key = os.getenv("KRAKEN_API_KEY")
     api_secret = os.getenv("KRAKEN_API_SECRET")
     
-    # Fallback: Check for .env file manually if dotenv is unavailable
     if not api_key or not api_secret:
-        try:
-            with open(".env", "r") as f:
-                for line in f:
-                    if line.startswith("KRAKEN_API_KEY="):
-                        api_key = line.strip().split("=")[1]
-                    elif line.startswith("KRAKEN_API_SECRET="):
-                        api_secret = line.strip().split("=")[1]
-        except FileNotFoundError:
-            pass
-    
-    # Final fallback: Prompt user for keys (for local testing)
-    if not api_key:
-        api_key = input("Enter Kraken API Key: ").strip()
-    if not api_secret:
-        api_secret = input("Enter Kraken API Secret: ").strip()
-    
-    if not api_key or not api_secret:
-        logger.error("API key or secret missing. Exiting.")
+        logger.error("KRAKEN_API_KEY or KRAKEN_API_SECRET missing in environment variables. Exiting.")
         sys.exit(1)
     
     return api_key, api_secret
@@ -56,7 +42,7 @@ def load_api_keys():
 # --- Configuration ---
 API_KEY, API_SECRET = load_api_keys()
 CONFIG = {
-    "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM": API_KEY,
+    "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"": API_KEY,
     "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==": API_SECRET,
     "TRADING_PAIR": "XXBTZUSD",  # Kraken API pair
     "DISPLAY_PAIR": "XBTUSD",  # For logging
@@ -84,17 +70,6 @@ CONFIG = {
     "RSI_BUY_THRESHOLD": 60.0,  # RSI ≤ 60.00 for buy (from log)
     "ATR_MULTIPLIER": 1.5,  # ATR adjustment for buy (from log)
 }
-
-# --- Setup Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("kraken_trading_bot.log", mode="a")
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # --- Setup Kraken API ---
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -354,8 +329,4 @@ async def main():
                 await asyncio.sleep(CONFIG["SLEEP_INTERVAL"])
 
             except Exception as e:
-                logger.error(f"Main loop error: {str(e)}")
-                await asyncio.sleep(CONFIG["SLEEP_INTERVAL"])
-
-if __name__ == "__main__":
-    asyncio.run(main())
+                logger.error(f"Main loop error: {
