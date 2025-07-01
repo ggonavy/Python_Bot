@@ -20,8 +20,9 @@ CONFIG = {
     "TIMEZONE": "US/Eastern",
     "MIN_USD_BALANCE": 10.0,  # Minimum USD for buy orders
     "MIN_BTC_BALANCE": 0.0001,  # Minimum BTC for sell orders
-    "SLEEP_INTERVAL": 60,  # Seconds between cycles to respect API limits
+    "SLEEP_INTERVAL": 30,  # Seconds between cycles (optimized for speed)
     "TAKER_FEE": 0.0026,  # Kraken taker fee (0.26%)
+    "RATE_LIMIT_SLEEP": 5,  # Seconds to sleep on rate limit error
 }
 
 # --- Setup Logging ---
@@ -53,27 +54,37 @@ def get_minimum_order_size():
         pair_info = k.get_tradable_asset_pairs(CONFIG["TRADING_PAIR"])
         return float(pair_info["ordermin"][0]), None
     except Exception as e:
+        if "call frequency exceeded" in str(e).lower():
+            logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
+            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
         return None, f"Failed to fetch minimum order size: {str(e)}"
 
-def get_ohlc_data():
-    """Fetch OHLC data and calculate RSI and EMA."""
+def get_ohlc_data(last_fetch_time=None):
+    """Fetch OHLC data and calculate RSI and EMA, caching for 4 hours."""
     try:
-        ohlc, _ = k.get_ohlc_data(
-            CONFIG["TRADING_PAIR"], interval=1440, ascending=True
-        )
-        ohlc["close"] = ohlc["close"].astype(float)
-        ohlc["rsi"] = RSIIndicator(ohlc["close"], CONFIG["RSI_WINDOW"]).rsi()
-        ohlc["ema"] = EMAIndicator(ohlc["close"], CONFIG["EMA_WINDOW"]).ema_indicator()
-        return ohlc, None
+        current_time = time.time()
+        if last_fetch_time is None or (current_time - last_fetch_time) > 14400:  # 4 hours
+            ohlc, _ = k.get_ohlc_data(CONFIG["TRADING_PAIR"], interval=1440, ascending=True)
+            ohlc["close"] = ohlc["close"].astype(float)
+            ohlc["rsi"] = RSIIndicator(ohlc["close"], CONFIG["RSI_WINDOW"]).rsi()
+            ohlc["ema"] = EMAIndicator(ohlc["close"], CONFIG["EMA_WINDOW"]).ema_indicator()
+            return ohlc, None, current_time
+        return None, "Using cached OHLC data", last_fetch_time
     except Exception as e:
-        return None, f"Data fetch error: {str(e)}"
+        if "call frequency exceeded" in str(e).lower():
+            logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
+            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
+        return None, f"Data fetch error: {str(e)}", last_fetch_time
 
 def get_current_price():
     """Get real-time price for the trading pair."""
     try:
         ticker = k.get_ticker_information(CONFIG["TRADING_PAIR"])
-        return float(ticker["c"][0]), None
+        return float(ticker["c"][0][0]), None  # Access first element of price list
     except Exception as e:
+        if "call frequency exceeded" in str(e).lower():
+            logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
+            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
         return None, f"Price fetch error: {str(e)}"
 
 def get_balances():
@@ -84,6 +95,9 @@ def get_balances():
         btc = float(balance.loc["XXBT"]["vol"]) if "XXBT" in balance.index else 0.0
         return usd, btc, None
     except Exception as e:
+        if "call frequency exceeded" in str(e).lower():
+            logger.warning(f"Private call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
+            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
         return 0.0, 0.0, f"Balance fetch error: {str(e)}"
 
 def execute_order(order_type, amount):
@@ -108,6 +122,9 @@ def execute_order(order_type, amount):
             return False, f"Order failed: {response['error']}"
         return True, "Order executed successfully"
     except Exception as e:
+        if "call frequency exceeded" in str(e).lower():
+            logger.warning(f"Private call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
+            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
         return False, f"Order execution error: {str(e)}"
 
 # --- Trading Strategy ---
@@ -153,11 +170,12 @@ def main():
         print("Error: API key or secret not provided in CONFIG. Please update CONFIG with valid Kraken API credentials.")
         sys.exit(1)
 
+    last_fetch_time = None
     while True:
         try:
             # Fetch market data
-            ohlc, err = get_ohlc_data()
-            if err:
+            ohlc, err, last_fetch_time = get_ohlc_data(last_fetch_time)
+            if err and "cached" not in err:
                 print(f"Error: {err}")
                 logger.error(err)
                 time.sleep(CONFIG["SLEEP_INTERVAL"])
@@ -169,12 +187,18 @@ def main():
                 err_msg = price_err or balance_err
                 print(f"Error: {err_msg}")
                 logger.error(err_msg)
-                time.sleep(30)
+                time.sleep(CONFIG["SLEEP_INTERVAL"])
                 continue
 
-            # Get latest indicators
-            current_rsi = round(ohlc["rsi"].iloc[-1], 2)
-            current_ema = round(ohlc["ema"].iloc[-1], 2)
+            # Get latest indicators (use cached OHLC if available)
+            if ohlc is not None:
+                current_rsi = round(ohlc["rsi"].iloc[-1], 2)
+                current_ema = round(ohlc["ema"].iloc[-1], 2)
+            else:
+                print("Using cached indicators, skipping trade")
+                logger.info("Using cached indicators, skipping trade")
+                time.sleep(CONFIG["SLEEP_INTERVAL"])
+                continue
 
             # Log market status
             timestamp = datetime.now(timezone(CONFIG["TIMEZONE"])).strftime("%Y-%m-%d %H:%M:%S")
@@ -217,7 +241,7 @@ def main():
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
             logger.error(f"Unexpected error: {str(e)}")
-            time.sleep(30)
+            time.sleep(CONFIG["SLEEP_INTERVAL"])
 
 if __name__ == "__main__":
     main()
