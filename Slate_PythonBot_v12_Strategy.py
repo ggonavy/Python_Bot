@@ -1,152 +1,151 @@
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
 import time
+import krakenex
 from datetime import datetime
 from pytz import timezone
-import krakenex
 from pykrakenapi import KrakenAPI
 from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator
 
-# --- CONFIG ---
-API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"  # Replace with your Kraken API key
-API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="  # Replace with your Kraken API secret
-PAIR = "XBTUSD"
-TIMEZONE = 'US/Eastern'
+# --- Configuration ---
+API_KEY = "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM"    # Replace with Kraken API key
+API_SECRET = "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=="  # Replace with Kraken API secret
+PAIR = "XBTUSD"             # Trading pair
+INITIAL_FIAT = 1000         # Starting USD balance
+EMA_WINDOW = 20             # 20-day EMA for trend confirmation
+RSI_WINDOW = 14             # 14-day RSI
+TIMEZONE = 'US/Eastern'     # Timezone for timestamps
 
-# --- INITIAL TOTALS ---
-initial_fiat = 100      # Your initial fiat amount (e.g., USD)
-initial_btc = 10        # Your initial BTC amount
-
-# --- SETUP ---
+# --- Setup ---
 warnings.simplefilter(action='ignore', category=FutureWarning)
 api = krakenex.API()
 api.key = API_KEY
 api.secret = API_SECRET
 k = KrakenAPI(api)
 
-# --- VARIABLES ---
-bought_levels = set()
-sold_levels = set()
-can_buy = True
-sold_all_btc = False  # Flag to indicate full BTC sale
+# --- Trading Levels ---
+BUY_LEVELS = [
+    {'rsi': 45, 'percentage': 0.20},  # Initial accumulation
+    {'rsi': 38, 'percentage': 0.30},  # Aggressive buying
+    {'rsi': 30, 'percentage': 1.00}   # Full allocation
+]
 
-# --- Helper functions ---
-def get_rsi():
+SELL_LEVELS = [
+    {'rsi': 65, 'percentage': 0.20},  # Initial profit taking
+    {'rsi': 72, 'percentage': 0.30},  # Aggressive selling
+    {'rsi': 80, 'percentage': 1.00}   # Full exit
+]
+
+# --- Helper Functions ---
+def get_ohlc_data():
+    """Fetch OHLC data with EMA calculation"""
     try:
-        # Fetch daily OHLC data (interval=1440 minutes = 1 day)
-        ohlc, _ = k.get_ohlc_data(PAIR, interval=1440)
-        close_prices = ohlc['close'].astype(float)
-        rsi_value = RSIIndicator(close_prices, window=14).rsi().iloc[-1]
-        return round(rsi_value, 2)
+        ohlc, last = k.get_ohlc_data(
+            PAIR, 
+            interval=1440,  # Daily candles
+            ascending=True
+        )
+        ohlc['close'] = ohlc['close'].astype(float)
+        
+        # Calculate indicators
+        ohlc['rsi'] = RSIIndicator(ohlc['close'], RSI_WINDOW).rsi()
+        ohlc['ema'] = EMAIndicator(ohlc['close'], EMA_WINDOW).ema_indicator()
+        
+        return ohlc, None
     except Exception as e:
-        print(f"Error calculating RSI: {e}")
-        return None
+        return None, f"Data fetch error: {str(e)}"
+
+def get_current_price():
+    """Get real-time BTC price"""
+    try:
+        ticker = k.get_ticker(PAIR)
+        return float(ticker['c'][0]), None  # 'c' = last closed price
+    except Exception as e:
+        return None, f"Price error: {str(e)}"
 
 def get_balances():
-    df = k.get_account_balance()
-    fiat = float(df.loc['ZUSD']['vol']) if 'ZUSD' in df.index else 0
-    btc = float(df.loc['XXBT']['vol']) if 'XXBT' in df.index else 0
-    return fiat, btc
-
-def get_price():
+    """Get current account balances"""
     try:
-        # Use get_ticker_info() to fetch latest price
-        ticker_df = k.get_ticker_info(PAIR)
-        last_price = float(ticker_df['c'][0])  # 'c' is last trade close price
-        return last_price
+        balance = k.get_account_balance()
+        usd = float(balance.loc['ZUSD']['vol']) if 'ZUSD' in balance.index else 0
+        btc = float(balance.loc['XXBT']['vol']) if 'XXBT' in balance.index else 0
+        return usd, btc, None
     except Exception as e:
-        print(f"Error fetching price: {e}")
-        return None
+        return 0, 0, f"Balance error: {str(e)}"
 
-def execute_trade(order_type, volume):
+def execute_order(order_type, amount):
+    """Execute market order with risk checks"""
     try:
+        if amount <= 0.0001:  # Kraken minimum order size
+            return False, "Order below minimum size"
+            
         response = k.query_private('AddOrder', {
             'pair': PAIR,
             'type': order_type,
             'ordertype': 'market',
-            'volume': str(volume)
+            'volume': str(round(amount, 8))
         })
-        if response.get('error'):
-            print(f"Trade error: {response['error']}")
-        else:
-            print(f"{order_type.capitalize()} {volume:.8f} BTC executed.")
+        
+        if response['error']:
+            return False, response['error']
+        return True, "Order executed"
     except Exception as e:
-        print(f"Trade exception: {e}")
+        return False, str(e)
 
-# --- Main loop ---
-print("Starting trading bot with 1-day timeframe...")
+# --- Trading Logic ---
+def buy_strategy(current_rsi, current_price, ema_value, usd_balance):
+    """Dynamic buy decision engine"""
+    if current_price < ema_value:
+        return 0, "Price below EMA - no buy"
+        
+    for level in sorted(BUY_LEVELS, key=lambda x: x['rsi']):
+        if current_rsi <= level['rsi']:
+            buy_amount = usd_balance * level['percentage']
+            return buy_amount, f"RSI {current_rsi} ≤ {level['rsi']} (Level {BUY_LEVELS.index(level)+1})"
+    
+    return 0, "No buy conditions met"
+
+def sell_strategy(current_rsi, current_price, ema_value, btc_balance):
+    """Dynamic sell decision engine"""
+    if current_price > ema_value:
+        return 0, "Price above EMA - no sell"
+        
+    for level in sorted(SELL_LEVELS, key=lambda x: x['rsi'], reverse=True):
+        if current_rsi >= level['rsi']:
+            sell_amount = btc_balance * level['percentage']
+            return sell_amount, f"RSI {current_rsi} ≥ {level['rsi']} (Level {SELL_LEVELS.index(level)+1})"
+    
+    return 0, "No sell conditions met"
+
+# --- Main Loop ---
+print("Starting Advanced BTC Trading Bot...")
 while True:
     try:
-        now = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
-        fiat, btc = get_balances()
-        rsi = get_rsi()
-        current_price = get_price()
-
-        # Display status
-        print(f"[{now}] RSI: {rsi} | Fiat: ${fiat:.2f} | BTC: {btc:.8f}")
-
-        # Reset after full BTC sale
-        if btc < 0.0001 and not sold_all_btc:
-            print("All BTC sold. Resetting levels. Waiting for RSI >= 42 to rebuy.")
-            sold_all_btc = True
-            bought_levels.clear()
-            sold_levels.clear()
-            can_buy = True
-
-        # Rebuy after full sale
-        if btc < 0.0001 and sold_all_btc:
-            if rsi is not None and rsi >= 42:
-                amount_btc = initial_fiat / current_price
-                print(f"RSI {rsi} >= 42 - Rebuying with full initial fiat ${initial_fiat} ({amount_btc:.8f} BTC)")
-                execute_trade('buy', amount_btc)
-                sold_all_btc = False
-
-        # Buy logic
-        if btc < 0.0001 and rsi is not None:
-            if rsi <= 30:
-                # Buy all remaining fiat
-                dollar_amount = fiat
-                amount_btc = dollar_amount / current_price
-                print(f"RSI {rsi} ≤ 30 - Buying all remaining fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
-                execute_trade('buy', amount_btc)
-                bought_levels.clear()
-            elif rsi <= 36 and '36' not in bought_levels:
-                # Buy additional 30% of initial fiat
-                dollar_amount = initial_fiat * 0.30
-                amount_btc = dollar_amount / current_price
-                print(f"RSI {rsi} ≤ 36 - Buying 30% of initial fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
-                execute_trade('buy', amount_btc)
-                bought_levels.add('36')
-            elif rsi <= 42 and '42' not in bought_levels:
-                # Buy 30% of initial fiat
-                dollar_amount = initial_fiat * 0.30
-                amount_btc = dollar_amount / current_price
-                print(f"RSI {rsi} ≤ 42 - Buying 30% of initial fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
-                execute_trade('buy', amount_btc)
-                bought_levels.add('42')
-
-        # Sell logic
-        if btc >= 0.0001:
-            if rsi >= 69 and '69' not in sold_levels:
-                btc_to_sell = initial_btc * 0.40
-                btc_to_sell = min(btc_to_sell, btc)
-                print(f"RSI {rsi} >= 69 - Selling 40% of initial BTC: {btc_to_sell:.8f}")
-                execute_trade('sell', btc_to_sell)
-                sold_levels.add('69')
-            if rsi >= 73 and '73' not in sold_levels:
-                btc_to_sell = initial_btc * 0.30
-                btc_to_sell = min(btc_to_sell, btc)
-                print(f"RSI {rsi} >= 73 - Selling 30% of initial BTC: {btc_to_sell:.8f}")
-                execute_trade('sell', btc_to_sell)
-                sold_levels.add('73')
-            if rsi >= 79 and 'ALL' not in sold_levels:
-                print(f"RSI {rsi} >= 79 - Selling all remaining BTC: {btc:.8f}")
-                execute_trade('sell', btc)
-                sold_levels.add('ALL')
-
-        time.sleep(20)
-
-    except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(30)
+        # Get market data
+        ohlc, err = get_ohlc_data()
+        if err:
+            print(f"Data Error: {err}")
+            time.sleep(60)
+            continue
+            
+        price, price_err = get_current_price()
+        usd, btc, balance_err = get_balances()
+        
+        if price_err or balance_err:
+            print(f"Error: {price_err or balance_err}")
+            time.sleep(30)
+            continue
+            
+        # Get latest indicators
+        current_rsi = round(ohlc['rsi'].iloc[-1], 2)
+        current_ema = round(ohlc['ema'].iloc[-1], 2)
+        
+        # Generate trading signal
+        timestamp = datetime.now(timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] Price: ${price} | RSI: {current_rsi} | EMA: {current_ema}")
+        print(f"USD: ${usd:.2f} | BTC: {btc:.6f}")
+        
+        # Execute trades
+        if usd > 10:  # Minimum USD balance for buys
+            buy_amount, buy_reason = buy_strategy(current_rsi, price, current_ema, usd)
+            if buy_amount
