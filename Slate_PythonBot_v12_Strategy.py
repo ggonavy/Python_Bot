@@ -51,8 +51,8 @@ def get_balances():
 
 def get_price():
     try:
-        # Use get_ticker() instead of get_ticker_info()
-        ticker_df = k.get_ticker(PAIR)
+        # Use get_ticker_info() to fetch latest price
+        ticker_df = k.get_ticker_info(PAIR)
         last_price = float(ticker_df['c'][0])  # 'c' is last trade close price
         return last_price
     except Exception as e:
@@ -104,26 +104,27 @@ while True:
 
         # Buy logic
         if btc < 0.0001 and rsi is not None:
-            if rsi >= 42:
-                pass  # Already handled above
-            elif rsi == 42 and '42' not in bought_levels:
-                dollar_amount = initial_fiat * 0.30
-                amount_btc = dollar_amount / current_price
-                print(f"RSI {rsi} = 42 - Buying 30% of initial fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
-                execute_trade('buy', amount_btc)
-                bought_levels.add('42')
-            elif rsi == 36 and '36' not in bought_levels:
-                dollar_amount = initial_fiat * 0.30
-                amount_btc = dollar_amount / current_price
-                print(f"RSI {rsi} = 36 - Buying 30% of initial fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
-                execute_trade('buy', amount_btc)
-                bought_levels.add('36')
-            elif rsi <= 30:
+            if rsi <= 30:
+                # Buy all remaining fiat
                 dollar_amount = fiat
                 amount_btc = dollar_amount / current_price
-                print(f"RSI {rsi} <= 30 - Buying all remaining fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
+                print(f"RSI {rsi} ≤ 30 - Buying all remaining fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
                 execute_trade('buy', amount_btc)
                 bought_levels.clear()
+            elif rsi <= 36 and '36' not in bought_levels:
+                # Buy additional 30% of initial fiat
+                dollar_amount = initial_fiat * 0.30
+                amount_btc = dollar_amount / current_price
+                print(f"RSI {rsi} ≤ 36 - Buying 30% of initial fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
+                execute_trade('buy', amount_btc)
+                bought_levels.add('36')
+            elif rsi <= 42 and '42' not in bought_levels:
+                # Buy 30% of initial fiat
+                dollar_amount = initial_fiat * 0.30
+                amount_btc = dollar_amount / current_price
+                print(f"RSI {rsi} ≤ 42 - Buying 30% of initial fiat: ${dollar_amount} ({amount_btc:.8f} BTC)")
+                execute_trade('buy', amount_btc)
+                bought_levels.add('42')
 
         # Sell logic
         if btc >= 0.0001:
