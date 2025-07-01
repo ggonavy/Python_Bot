@@ -129,7 +129,7 @@ def sell_strategy(current_rsi, current_price, ema_value, btc_balance):
             return sell_amount, f"RSI {current_rsi:.2f} ≥ {level['rsi']} (Level {SELL_LEVELS.index(level)+1})"
     return 0.0, "No sell conditions met"
 
-# --- Trading levels for buy/sell signals ---
+# --- Trading Levels ---
 BUY_LEVELS = [
     {"rsi": 45, "percentage": 0.20},  # 20% allocation
     {"rsi": 38, "percentage": 0.30},  # 30% allocation
@@ -170,4 +170,54 @@ def main():
                 print(f"Error: {err_msg}")
                 logger.error(err_msg)
                 time.sleep(30)
-              
+                continue
+
+            # Get latest indicators
+            current_rsi = round(ohlc["rsi"].iloc[-1], 2)
+            current_ema = round(ohlc["ema"].iloc[-1], 2)
+
+            # Log market status
+            timestamp = datetime.now(timezone(CONFIG["TIMEZONE"])).strftime("%Y-%m-%d %H:%M:%S")
+            status = f"[{timestamp}] Price: ${price:.2f} | RSI: {current_rsi:.2f} | EMA: ${current_ema:.2f} | USD: ${usd:.2f} | BTC: {btc:.6f}"
+            print(status)
+            logger.info(status)
+
+            # Execute buy strategy
+            if usd > CONFIG["MIN_USD_BALANCE"]:
+                buy_amount, buy_reason = buy_strategy(current_rsi, price, current_ema, usd)
+                if buy_amount > 0:
+                    btc_amount = buy_amount / price
+                    success, message = execute_order("buy", btc_amount)
+                    log_msg = f"Buy: {buy_reason} | Amount: ${buy_amount:.2f} ({btc_amount:.6f} BTC) | {message}"
+                    print(log_msg)
+                    logger.info(log_msg)
+                else:
+                    print(f"Buy: {buy_reason}")
+                    logger.info(f"Buy: {buy_reason}")
+
+            # Execute sell strategy
+            if btc > CONFIG["MIN_BTC_BALANCE"]:
+                sell_amount, sell_reason = sell_strategy(current_rsi, price, current_ema, btc)
+                if sell_amount > 0:
+                    success, message = execute_order("sell", sell_amount)
+                    log_msg = f"Sell: {sell_reason} | Amount: {sell_amount:.6f} BTC | {message}"
+                    print(log_msg)
+                    logger.info(log_msg)
+                else:
+                    print(f"Sell: {sell_reason}")
+                    logger.info(f"Sell: {sell_reason}")
+
+            # Sleep to avoid API rate limits
+            time.sleep(CONFIG["SLEEP_INTERVAL"])
+
+        except KeyboardInterrupt:
+            print("Bot stopped by user")
+            logger.info("Bot stopped by user")
+            break
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+            logger.error(f"Unexpected error: {str(e)}")
+            time.sleep(30)
+
+if __name__ == "__main__":
+    main()
