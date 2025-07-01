@@ -1,3 +1,4 @@
+
 import warnings
 import time
 import logging
@@ -20,12 +21,14 @@ CONFIG = {
     "TIMEZONE": "US/Eastern",
     "MIN_USD_BALANCE": 10.0,  # Minimum USD for buy orders
     "MIN_BTC_BALANCE": 0.0001,  # Minimum BTC for sell orders
-    "SLEEP_INTERVAL": 15,  # Seconds between cycles (faster for paid Render tier)
+    "SLEEP_INTERVAL": 10,  # Seconds between cycles (fast for Render Standard tier)
     "TAKER_FEE": 0.0026,  # Kraken taker fee (0.26%)
-    "RATE_LIMIT_SLEEP": 5,  # Seconds to sleep on rate limit error
+    "RATE_LIMIT_SLEEP": 5,  # Base seconds to sleep on rate limit error
+    "MAX_RATE_LIMIT_SLEEP": 10,  # Max seconds for backoff
     "OHLC_CACHE_DURATION": 900,  # Cache OHLC for 15 minutes
     "TICKER_CACHE_DURATION": 300,  # Cache ticker for 5 minutes
     "API_CALL_DELAY": 0.5,  # Seconds between API calls
+    "MAX_RETRIES": 3,  # Max retries for API calls
 }
 
 # --- Setup Logging ---
@@ -52,16 +55,20 @@ except Exception as e:
 
 # --- Helper Functions ---
 def get_minimum_order_size():
-    """Fetch minimum order size for the trading pair."""
-    try:
-        time.sleep(CONFIG["API_CALL_DELAY"])
-        pair_info = k.get_tradable_asset_pairs(CONFIG["TRADING_PAIR"])
-        return float(pair_info["ordermin"][0]), None
-    except Exception as e:
-        if "call frequency exceeded" in str(e).lower():
-            logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
-            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
-        return None, f"Failed to fetch minimum order size: {str(e)}"
+    """Fetch minimum order size for the trading pair with retries."""
+    for attempt in range(CONFIG["MAX_RETRIES"]):
+        try:
+            time.sleep(CONFIG["API_CALL_DELAY"])
+            pair_info = k.get_tradable_asset_pairs(CONFIG["TRADING_PAIR"])
+            return float(pair_info["ordermin"][0]), None
+        except Exception as e:
+            if "call frequency exceeded" in str(e).lower():
+                sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
+                logger.warning(f"Public call frequency exceeded, sleeping for {sleep_time} seconds (attempt {attempt+1})")
+                time.sleep(sleep_time)
+            if attempt == CONFIG["MAX_RETRIES"] - 1:
+                return None, f"Failed to fetch minimum order size after {CONFIG['MAX_RETRIES']} attempts: {str(e)}"
+    return None, "Max retries exceeded"
 
 def get_ohlc_data(last_fetch_time=None, last_ohlc=None):
     """Fetch OHLC data and calculate RSI and EMA, caching for specified duration."""
@@ -77,67 +84,80 @@ def get_ohlc_data(last_fetch_time=None, last_ohlc=None):
         return last_ohlc, "Using cached OHLC data", last_fetch_time
     except Exception as e:
         if "call frequency exceeded" in str(e).lower():
-            logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
-            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
+            sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
+            logger.warning(f"Public call frequency exceeded, sleeping for {sleep_time} seconds")
+            time.sleep(sleep_time)
         return last_ohlc, f"Data fetch error: {str(e)}", last_fetch_time
 
 def get_current_price(last_price=None, last_price_time=None):
     """Get real-time price for the trading pair, caching for specified duration."""
-    try:
-        current_time = time.time()
-        if last_price_time is None or (current_time - last_price_time) > CONFIG["TICKER_CACHE_DURATION"]:
-            time.sleep(CONFIG["API_CALL_DELAY"])
-            ticker = k.get_ticker_information(CONFIG["TRADING_PAIR"])
-            price = float(ticker["c"][0][0])
-            return price, None, current_time
-        return last_price, "Using cached price", last_price_time
-    except Exception as e:
-        if "call frequency exceeded" in str(e).lower():
-            logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
-            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
-        return None, f"Price fetch error: {str(e)}", last_price_time
+    for attempt in range(CONFIG["MAX_RETRIES"]):
+        try:
+            current_time = time.time()
+            if last_price_time is None or (current_time - last_price_time) > CONFIG["TICKER_CACHE_DURATION"]:
+                time.sleep(CONFIG["API_CALL_DELAY"])
+                ticker = k.get_ticker_information(CONFIG["TRADING_PAIR"])
+                price = float(ticker["c"][0][0])
+                return price, None, current_time
+            return last_price, "Using cached price", last_price_time
+        except Exception as e:
+            if "call frequency exceeded" in str(e).lower():
+                sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
+                logger.warning(f"Public call frequency exceeded, sleeping for {sleep_time} seconds (attempt {attempt+1})")
+                time.sleep(sleep_time)
+            if attempt == CONFIG["MAX_RETRIES"] - 1:
+                return None, f"Price fetch error after {CONFIG['MAX_RETRIES']} attempts: {str(e)}", last_price_time
+    return None, "Max retries exceeded", last_price_time
 
 def get_balances():
-    """Get current USD and BTC balances."""
-    try:
-        time.sleep(CONFIG["API_CALL_DELAY"])
-        balance = k.get_account_balance()
-        usd = float(balance.loc["ZUSD"]["vol"]) if "ZUSD" in balance.index else 0.0
-        btc = float(balance.loc["XXBT"]["vol"]) if "XXBT" in balance.index else 0.0
-        return usd, btc, None
-    except Exception as e:
-        if "call frequency exceeded" in str(e).lower():
-            logger.warning(f"Private call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
-            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
-        return 0.0, 0.0, f"Balance fetch error: {str(e)}"
+    """Get current USD and BTC balances with retries."""
+    for attempt in range(CONFIG["MAX_RETRIES"]):
+        try:
+            time.sleep(CONFIG["API_CALL_DELAY"])
+            balance = k.get_account_balance()
+            usd = float(balance.loc["ZUSD"]["vol"]) if "ZUSD" in balance.index else 0.0
+            btc = float(balance.loc["XXBT"]["vol"]) if "XXBT" in balance.index else 0.0
+            return usd, btc, None
+        except Exception as e:
+            if "call frequency exceeded" in str(e).lower():
+                sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
+                logger.warning(f"Private call frequency exceeded, sleeping for {sleep_time} seconds (attempt {attempt+1})")
+                time.sleep(sleep_time)
+            if attempt == CONFIG["MAX_RETRIES"] - 1:
+                return 0.0, 0.0, f"Balance fetch error after {CONFIG['MAX_RETRIES']} attempts: {str(e)}"
+    return 0.0, 0.0, "Max retries exceeded"
 
 def execute_order(order_type, amount):
-    """Execute a market order with validation."""
-    try:
-        min_order_size, err = get_minimum_order_size()
-        if err:
-            return False, err
-        if amount < min_order_size:
-            return False, f"Order size {amount:.8f} below minimum {min_order_size}"
-        
-        time.sleep(CONFIG["API_CALL_DELAY"])
-        response = k.query_private(
-            "AddOrder",
-            {
-                "pair": CONFIG["TRADING_PAIR"],
-                "type": order_type,
-                "ordertype": "market",
-                "volume": str(round(amount, 8)),
-            },
-        )
-        if response["error"]:
-            return False, f"Order failed: {response['error']}"
-        return True, "Order executed successfully"
-    except Exception as e:
-        if "call frequency exceeded" in str(e).lower():
-            logger.warning(f"Private call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
-            time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
-        return False, f"Order execution error: {str(e)}"
+    """Execute a market order with validation and retries."""
+    for attempt in range(CONFIG["MAX_RETRIES"]):
+        try:
+            min_order_size, err = get_minimum_order_size()
+            if err:
+                return False, err
+            if amount < min_order_size:
+                return False, f"Order size {amount:.8f} below minimum {min_order_size}"
+            
+            time.sleep(CONFIG["API_CALL_DELAY"])
+            response = k.query_private(
+                "AddOrder",
+                {
+                    "pair": CONFIG["TRADING_PAIR"],
+                    "type": order_type,
+                    "ordertype": "market",
+                    "volume": str(round(amount, 8)),
+                },
+            )
+            if response["error"]:
+                return False, f"Order failed: {response['error']}"
+            return True, "Order executed successfully"
+        except Exception as e:
+            if "call frequency exceeded" in str(e).lower():
+                sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
+                logger.warning(f"Private call frequency exceeded, sleeping for {sleep_time} seconds (attempt {attempt+1})")
+                time.sleep(sleep_time)
+            if attempt == CONFIG["MAX_RETRIES"] - 1:
+                return False, f"Order execution error after {CONFIG['MAX_RETRIES']} attempts: {str(e)}"
+    return False, "Max retries exceeded"
 
 # --- Trading Strategy ---
 def buy_strategy(current_rsi, current_price, ema_value, usd_balance):
