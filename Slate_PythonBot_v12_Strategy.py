@@ -1,7 +1,6 @@
 import warnings
 import time
 import logging
-import os
 from datetime import datetime
 from pytz import timezone
 import krakenex
@@ -11,8 +10,8 @@ from ta.trend import EMAIndicator
 
 # --- Configuration ---
 CONFIG = {
-    "API_KEY": os.getenv("haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM", ""),
-    "API_SECRET": os.getenv("MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==", ""),
+    "API_KEY": "haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM",  # Replace with your Kraken API key
+    "API_SECRET": "MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==",  # Replace with your Kraken API secret
     "TRADING_PAIR": "XBTUSD",
     "INITIAL_FIAT": 1000.0,  # Starting USD balance for simulation
     "EMA_WINDOW": 20,  # 20-day EMA
@@ -138,6 +137,12 @@ def main():
     logger.info("Starting Kraken BTC Trading Bot")
     print("Starting Kraken BTC Trading Bot... (Logs saved to kraken_trading_bot.log)")
     
+    # Check for valid API credentials
+    if not CONFIG["API_KEY"] or not CONFIG["API_SECRET"]:
+        print("Error: API key and secret must be provided in CONFIG")
+        logger.error("Missing API key or secret")
+        return
+
     while True:
         try:
             # Fetch market data
@@ -163,7 +168,7 @@ def main():
 
             # Log market status
             timestamp = datetime.now(timezone(CONFIG["TIMEZONE"])).strftime("%Y-%m-%d %H:%M:%S")
-            status = f"[{timestamp}] Price: ${price:.2f} | RSI: {current_rsi:.2f} | EMA: {current_ema:.2f} | USD: ${usd:.2f} | BTC: {btc:.6f}"
+            status = f"[{timestamp}] Price: ${price:.2f} | RSI: {current_rsi:.2f} | EMA: ${current_ema:.2f} | USD: ${usd:.2f} | BTC: {btc:.6f}"
             print(status)
             logger.info(status)
 
@@ -205,8 +210,4 @@ def main():
             time.sleep(30)
 
 if __name__ == "__main__":
-    if not CONFIG["API_KEY"] or not CONFIG["API_SECRET"]:
-        print("Error: API key and secret must be set in environment variables KRAKEN_API_KEY and KRAKEN_API_SECRET")
-        logger.error("Missing API key or secret")
-    else:
-        main()
+    main()
