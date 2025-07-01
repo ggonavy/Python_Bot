@@ -26,16 +26,17 @@ CONFIG = {
     "TIMEZONE": "US/Eastern",
     "MIN_USD_BALANCE": 10.0,  # Minimum USD for buy orders
     "MIN_BTC_BALANCE": 0.0001,  # Minimum BTC for sell orders
-    "SLEEP_INTERVAL": 5,  # Seconds between cycles (for Kraken Intermediate)
-    "TAKER_FEE": 0.0026,  # Kraken taker fee (0.26%)
-    "RATE_LIMIT_SLEEP": 5,  # Base seconds to sleep on rate limit error
-    "MAX_RATE_LIMIT_SLEEP": 10,  # Max seconds for backoff
-    "OHLC_CACHE_DURATION": 300,  # Cache OHLC for 5 minutes
-    "TICKER_CACHE_DURATION": 300,  # Cache ticker for 5 minutes
-    "API_CALL_DELAY": 0.5,  # Seconds between synchronous API calls
+    "SLEEP_INTERVAL": 3,  # Seconds between cycles (for Kraken Pro)
+    "TAKER_FEE": 0.0016,  # Kraken Pro taker fee (0.16%)
+    "RATE_LIMIT_SLEEP": 3,  # Base seconds to sleep on rate limit error
+    "MAX_RATE_LIMIT_SLEEP": 8,  # Max seconds for backoff
+    "OHLC_CACHE_DURATION": 180,  # Cache OHLC for 3 minutes
+    "TICKER_CACHE_DURATION": 180,  # Cache ticker for 3 minutes
+    "API_CALL_DELAY": 0.3,  # Seconds between synchronous API calls
     "MAX_RETRIES": 3,  # Max retries for API calls
     "PRICE_DIP_THRESHOLD": 0.01,  # 1% price dip to trigger buy
     "PRICE_DIP_THRESHOLD_HIGH": 0.02,  # 2% price dip for larger buy
+    "MOMENTUM_THRESHOLD": 0.005,  # 0.5% price increase for momentum buy
     "STOP_LOSS_THRESHOLD": 0.05,  # 5% price drop for stop-loss
     "VOLATILITY_THRESHOLD": 0.005,  # ATR threshold for dynamic RSI
     "DATA_FILE": "trade_data.json",  # File to persist trade data
@@ -138,71 +139,58 @@ async def get_ohlc_data_async(last_fetch_time=None, last_ohlc=None):
         return last_ohlc, "Max retries exceeded", last_fetch_time
     return last_ohlc, "Using cached OHLC data", last_fetch_time
 
-async def get_current_price_async(session, last_price=None, last_price_time=None):
-    """Get real-time price for the trading pair, caching for specified duration."""
-    current_time = time.time()
-    if last_price_time is None or (current_time - last_price_time) > CONFIG["TICKER_CACHE_DURATION"]:
-        for attempt in range(CONFIG["MAX_RETRIES"]):
-            try:
-                async with session.get(
-                    f"https://api.kraken.com/0/public/Ticker?pair={CONFIG['TRADING_PAIR']}"
-                ) as response:
-                    data = await response.json()
-                    if data["error"]:
-                        return None, f"API error: {data['error']}", last_price_time
-                    price = float(data["result"][CONFIG["TRADING_PAIR"]]["c"][0])
-                    return price, None, current_time
-            except Exception as e:
-                if "call frequency exceeded" in str(e).lower():
-                    sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
-                    logger.warning(f"Public call frequency exceeded, sleeping for {sleep_time} seconds (attempt {attempt+1})")
-                    await asyncio.sleep(sleep_time)
-                if attempt == CONFIG["MAX_RETRIES"] - 1:
-                    return None, f"Price fetch error after {CONFIG['MAX_RETRIES']} attempts: {str(e)}", last_price_time
-        return None, "Max retries exceeded", last_price_time
-    return last_price, "Using cached price", last_price_time
+async def get_price_and_balance_async(session):
+    """Batch fetch price and balance to reduce API calls."""
+    price, price_err, price_time = None, None, None
+    usd, btc, balance_err = 0.0, 0.0, None
 
-async def get_balances_async():
-    """Get current USD and BTC balances with retries."""
-    for attempt in range(CONFIG["MAX_RETRIES"]):
+    async with session.get(
+        f"https://api.kraken.com/0/public/Ticker?pair={CONFIG['TRADING_PAIR']}"
+    ) as response:
         try:
-            time.sleep(CONFIG["API_CALL_DELAY"])  # Synchronous delay for KrakenAPI
-            balance = k.get_account_balance()
-            usd = float(balance.loc["ZUSD"]["vol"]) if "ZUSD" in balance.index else 0.0
-            btc = float(balance.loc["XXBT"]["vol"]) if "XXBT" in balance.index else 0.0
-            return usd, btc, None
+            data = await response.json()
+            if data["error"]:
+                price_err = f"API error: {data['error']}"
+            else:
+                price = float(data["result"][CONFIG["TRADING_PAIR"]]["c"][0])
+                price_time = time.time()
         except Exception as e:
-            if "call frequency exceeded" in str(e).lower():
-                sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
-                logger.warning(f"Private call frequency exceeded, sleeping for {sleep_time} seconds (attempt {attempt+1})")
-                await asyncio.sleep(sleep_time)
-            if attempt == CONFIG["MAX_RETRIES"] - 1:
-                return 0.0, 0.0, f"Balance fetch error after {CONFIG['MAX_RETRIES']} attempts: {str(e)}"
-    return 0.0, 0.0, "Max retries exceeded"
+            price_err = f"Price fetch error: {str(e)}"
+
+    try:
+        time.sleep(CONFIG["API_CALL_DELAY"])  # Synchronous delay for KrakenAPI
+        balance = k.get_account_balance()
+        usd = float(balance.loc["ZUSD"]["vol"]) if "ZUSD" in balance.index else 0.0
+        btc = float(balance.loc["XXBT"]["vol"]) if "XXBT" in balance.index else 0.0
+    except Exception as e:
+        balance_err = f"Balance fetch error: {str(e)}"
+
+    return price, price_err, price_time, usd, btc, balance_err
 
 async def execute_order_async(order_type, amount):
     """Execute a market order with validation and retries."""
     for attempt in range(CONFIG["MAX_RETRIES"]):
         try:
-            min_order_size, err = await get_minimum_order_size_async(aiohttp.ClientSession())
-            if err:
-                return False, err
-            if amount < min_order_size:
-                return False, f"Order size {amount:.8f} below minimum {min_order_size}"
-            
-            time.sleep(CONFIG["API_CALL_DELAY"])  # Synchronous delay for KrakenAPI
-            response = k.query_private(
-                "AddOrder",
-                {
-                    "pair": CONFIG["TRADING_PAIR"],
-                    "type": order_type,
-                    "ordertype": "market",
-                    "volume": str(round(amount, 8)),
-                },
-            )
-            if response["error"]:
-                return False, f"Order failed: {response['error']}"
-            return True, "Order executed successfully"
+            async with aiohttp.ClientSession() as session:
+                min_order_size, err = await get_minimum_order_size_async(session)
+                if err:
+                    return False, err
+                if amount < min_order_size:
+                    return False, f"Order size {amount:.8f} below minimum {min_order_size}"
+                
+                time.sleep(CONFIG["API_CALL_DELAY"])  # Synchronous delay for KrakenAPI
+                response = k.query_private(
+                    "AddOrder",
+                    {
+                        "pair": CONFIG["TRADING_PAIR"],
+                        "type": order_type,
+                        "ordertype": "market",
+                        "volume": str(round(amount, 8)),
+                    },
+                )
+                if response["error"]:
+                    return False, f"Order failed: {response['error']}"
+                return True, "Order executed successfully"
         except Exception as e:
             if "call frequency exceeded" in str(e).lower():
                 sleep_time = min(CONFIG["RATE_LIMIT_SLEEP"] * (2 ** attempt), CONFIG["MAX_RATE_LIMIT_SLEEP"])
@@ -214,7 +202,7 @@ async def execute_order_async(order_type, amount):
 
 # --- Trading Strategy ---
 def buy_strategy(current_rsi, current_price, ema_value, usd_balance, prev_price, atr_value):
-    """Determine buy amount based on RSI or price dip with dynamic thresholds."""
+    """Determine buy amount based on RSI, price dip, or momentum with dynamic thresholds."""
     # Adjust RSI levels based on volatility (ATR)
     atr_multiplier = 1.0 if atr_value is None else max(0.5, min(1.5, atr_value / CONFIG["VOLATILITY_THRESHOLD"]))
     buy_levels = [
@@ -244,10 +232,20 @@ def buy_strategy(current_rsi, current_price, ema_value, usd_balance, prev_price,
             dip_buy_amount = usd_balance * 0.20 * (1 - CONFIG["TAKER_FEE"])  # 20% for 1-2% dip
             dip_reason = f"Price dip {dip_percentage*100:.2f}% ≥ {CONFIG['PRICE_DIP_THRESHOLD']*100}%"
 
-    # Choose larger buy amount (RSI or dip)
-    if rsi_buy_amount > dip_buy_amount:
-        return rsi_buy_amount, rsi_reason
-    return dip_buy_amount, dip_reason
+    # Momentum buy (rapid price recovery post-dip)
+    mom_buy_amount = 0.0
+    mom_reason = "No momentum conditions met"
+    if prev_price and current_price > prev_price * (1 + CONFIG["MOMENTUM_THRESHOLD"]):
+        mom_buy_amount = usd_balance * 0.30 * (1 - CONFIG["TAKER_FEE"])  # 30% for 0.5%+ increase
+        mom_reason = f"Momentum: Price increase {((current_price - prev_price) / prev_price * 100):.2f}% ≥ {CONFIG['MOMENTUM_THRESHOLD']*100}%"
+
+    # Choose largest buy amount (RSI, dip, or momentum)
+    amounts = [
+        (rsi_buy_amount, rsi_reason),
+        (dip_buy_amount, dip_reason),
+        (mom_buy_amount, mom_reason),
+    ]
+    return max(amounts, key=lambda x: x[0])
 
 def sell_strategy(current_rsi, current_price, ema_value, btc_balance, avg_buy_price, atr_value):
     """Determine sell amount based on RSI or stop-loss with dynamic thresholds."""
@@ -319,22 +317,20 @@ async def main():
                     current_ema = round(ohlc["ema"].iloc[-1], 2)
                     current_atr = round(ohlc["atr"].iloc[-1], 4)
 
-                price, price_err, last_price_time = await get_current_price_async(session, last_price, last_price_time)
+                price, price_err, last_price_time, usd, btc, balance_err = await get_price_and_balance_async(session)
                 if price_err and "cached" not in price_err:
                     print(f"Error: {price_err}")
                     logger.error(price_err)
                     await asyncio.sleep(CONFIG["SLEEP_INTERVAL"])
                     continue
-                if price is not None:
-                    prev_price = last_price
-                    last_price = price
-
-                usd, btc, balance_err = await get_balances_async()
                 if balance_err:
                     print(f"Error: {balance_err}")
                     logger.error(balance_err)
                     await asyncio.sleep(CONFIG["SLEEP_INTERVAL"])
                     continue
+                if price is not None:
+                    prev_price = last_price
+                    last_price = price
 
                 # Skip trading if no valid RSI or price
                 if current_rsi is None or last_price is None:
