@@ -23,6 +23,7 @@ CONFIG = {
     "SLEEP_INTERVAL": 30,  # Seconds between cycles (optimized for speed)
     "TAKER_FEE": 0.0026,  # Kraken taker fee (0.26%)
     "RATE_LIMIT_SLEEP": 5,  # Seconds to sleep on rate limit error
+    "OHLC_CACHE_DURATION": 3600,  # Cache OHLC for 1 hour (3600 seconds)
 }
 
 # --- Setup Logging ---
@@ -59,28 +60,28 @@ def get_minimum_order_size():
             time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
         return None, f"Failed to fetch minimum order size: {str(e)}"
 
-def get_ohlc_data(last_fetch_time=None):
-    """Fetch OHLC data and calculate RSI and EMA, caching for 4 hours."""
+def get_ohlc_data(last_fetch_time=None, last_ohlc=None):
+    """Fetch OHLC data and calculate RSI and EMA, caching for specified duration."""
     try:
         current_time = time.time()
-        if last_fetch_time is None or (current_time - last_fetch_time) > 14400:  # 4 hours
+        if last_fetch_time is None or (current_time - last_fetch_time) > CONFIG["OHLC_CACHE_DURATION"]:
             ohlc, _ = k.get_ohlc_data(CONFIG["TRADING_PAIR"], interval=1440, ascending=True)
             ohlc["close"] = ohlc["close"].astype(float)
             ohlc["rsi"] = RSIIndicator(ohlc["close"], CONFIG["RSI_WINDOW"]).rsi()
             ohlc["ema"] = EMAIndicator(ohlc["close"], CONFIG["EMA_WINDOW"]).ema_indicator()
             return ohlc, None, current_time
-        return None, "Using cached OHLC data", last_fetch_time
+        return last_ohlc, "Using cached OHLC data", last_fetch_time
     except Exception as e:
         if "call frequency exceeded" in str(e).lower():
             logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
             time.sleep(CONFIG["RATE_LIMIT_SLEEP"])
-        return None, f"Data fetch error: {str(e)}", last_fetch_time
+        return last_ohlc, f"Data fetch error: {str(e)}", last_fetch_time
 
 def get_current_price():
     """Get real-time price for the trading pair."""
     try:
         ticker = k.get_ticker_information(CONFIG["TRADING_PAIR"])
-        return float(ticker["c"][0][0]), None  # Access first element of price list
+        return float(ticker["c"][0][0]), None
     except Exception as e:
         if "call frequency exceeded" in str(e).lower():
             logger.warning(f"Public call frequency exceeded, sleeping for {CONFIG['RATE_LIMIT_SLEEP']} seconds")
@@ -171,15 +172,24 @@ def main():
         sys.exit(1)
 
     last_fetch_time = None
+    last_ohlc = None
+    current_rsi = None
+    current_ema = None
+
     while True:
         try:
             # Fetch market data
-            ohlc, err, last_fetch_time = get_ohlc_data(last_fetch_time)
+            ohlc, err, last_fetch_time = get_ohlc_data(last_fetch_time, last_ohlc)
             if err and "cached" not in err:
                 print(f"Error: {err}")
                 logger.error(err)
                 time.sleep(CONFIG["SLEEP_INTERVAL"])
                 continue
+
+            if ohlc is not None:
+                last_ohlc = ohlc
+                current_rsi = round(ohlc["rsi"].iloc[-1], 2)
+                current_ema = round(ohlc["ema"].iloc[-1], 2)
 
             price, price_err = get_current_price()
             usd, btc, balance_err = get_balances()
@@ -190,13 +200,10 @@ def main():
                 time.sleep(CONFIG["SLEEP_INTERVAL"])
                 continue
 
-            # Get latest indicators (use cached OHLC if available)
-            if ohlc is not None:
-                current_rsi = round(ohlc["rsi"].iloc[-1], 2)
-                current_ema = round(ohlc["ema"].iloc[-1], 2)
-            else:
-                print("Using cached indicators, skipping trade")
-                logger.info("Using cached indicators, skipping trade")
+            # Skip trading if no valid RSI/EMA (e.g., initial fetch failed)
+            if current_rsi is None or current_ema is None:
+                print("No valid RSI/EMA data, skipping trade")
+                logger.info("No valid RSI/EMA data, skipping trade")
                 time.sleep(CONFIG["SLEEP_INTERVAL"])
                 continue
 
