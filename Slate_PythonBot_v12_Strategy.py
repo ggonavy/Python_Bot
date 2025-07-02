@@ -322,8 +322,8 @@ async def main():
                         trade_state['avg_entry'] = (trade_state['avg_entry'] * trade_state['btc_volume'] + btc_price * btc_volume) / total_btc
                         trade_state['stage'] = 2
                         trade_state['btc_volume'] = total_btc
-                        trade_state['hedge_volume'] += hedge_volume
-                        trade_state['hedge_start_time': time.time()
+                        trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
+                        trade_state['hedge_start_time'] = time.time()
                         fiat_balance -= btc_volume * btc_price
                         btc_balance += btc_volume
                         log_trade(f"Balance updated: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}")
@@ -346,8 +346,8 @@ async def main():
                         trade_state['avg_entry'] = (trade_state['avg_entry'] * trade_state['btc_volume'] + btc_price * btc_volume) / total_btc
                         trade_state['stage'] = 3
                         trade_state['btc_volume'] = total_btc
-                        trade_state['hedge_volume'] += hedge_volume
-                        trade_state['hedge_start_time': time.time()
+                        trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
+                        trade_state['hedge_start_time'] = time.time()
                         fiat_balance -= btc_volume * btc_price
                         btc_balance += btc_volume
                         log_trade(f"Balance updated: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}")
@@ -383,8 +383,8 @@ async def main():
                     order = execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
                     if order:
                         execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                        trade_state['btc_volume'] -= btc_volume
-                        trade_state['hedge_volume'] -= hedge_volume
+                        trade_state['btc_volume'] = trade_state['btc_volume'] - btc_volume
+                        trade_state['hedge_volume'] = trade_state['hedge_volume'] - hedge_volume
                         trade_state['sell_stage'] = 1
                         fiat_balance += btc_volume * btc_price
                         btc_balance -= btc_volume
@@ -398,8 +398,8 @@ async def main():
                     order = execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
                     if order:
                         execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                        trade_state['btc_volume'] -= btc_volume
-                        trade_state['hedge_volume'] -= hedge_volume
+                        trade_state['btc_volume'] = trade_state['btc_volume'] - btc_volume
+                        trade_state['hedge_volume'] = trade_state['hedge_volume'] - hedge_volume
                         trade_state['sell_stage'] = 2
                         fiat_balance += btc_volume * btc_price
                         btc_balance -= btc_volume
