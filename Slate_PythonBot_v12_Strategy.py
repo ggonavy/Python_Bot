@@ -55,6 +55,7 @@ MIN_USD_BALANCE = 100  # Minimum USD balance required
 HEALTH_CHECK_INTERVAL = 900  # 15 minutes to reduce API calls
 DEBUG_MODE = True  # Enable debug logging
 API_RATE_LIMIT_SLEEP = 6  # Seconds to avoid public call frequency exceeded
+MIN_BTC_VOLUME = 0.0001  # Minimum BTC trade volume per Kraken requirements
 
 def log_trade(message):
     with open(LOG_FILE, 'a') as f:
@@ -90,6 +91,11 @@ def calculate_indicators(btc_df, hedge_df):
         else:
             btc_df = btc_df.reset_index(drop=True).copy()
 
+        # Validate data before indicators
+        if btc_df['close'].isna().any() or btc_df['close'].eq(0).any() or (hedge_df is not None and (hedge_df['close'].isna().any() or hedge_df['close'].eq(0).any())):
+            log_trade("Error: Invalid or NaN values detected in OHLC data")
+            return None, None
+
         btc_df['RSI'] = RSIIndicator(btc_df['close'], RSI_PERIOD).rsi()
         btc_df['EMA'] = EMAIndicator(btc_df['close'], EMA_PERIOD).ema_indicator()
         btc_df['ATR'] = AverageTrueRange(btc_df['high'], btc_df['low'], btc_df['close'], ATR_PERIOD).average_true_range()
@@ -105,17 +111,20 @@ def calculate_indicators(btc_df, hedge_df):
         return None, None
 
 def execute_trade(pair, side, price, volume):
-    if not pair or volume <= 0:
-        log_trade(f"No trade executed: Invalid pair ({pair}) or volume ({volume})")
+    if not pair or volume < MIN_BTC_VOLUME:
+        log_trade(f"No trade executed: Invalid pair ({pair}) or volume ({volume:.6f}) below minimum ({MIN_BTC_VOLUME})")
         return None
-    try:
-        order = k.add_order(pair, side, 'market', volume, price=price)
-        log_trade(f"Executed {side} order on {pair}: Price: ${price:.2f}, Volume: {volume:.6f}")
-        time.sleep(API_RATE_LIMIT_SLEEP)
-        return order
-    except Exception as e:
-        log_trade(f"Error executing {side} order on {pair}: {str(e)}")
-        return None
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            order = k.add_order(pair, side, 'market', volume, price=price)
+            log_trade(f"Executed {side} order on {pair}: Price: ${price:.2f}, Volume: {volume:.6f}")
+            time.sleep(API_RATE_LIMIT_SLEEP)
+            return order
+        except Exception as e:
+            log_trade(f"Error executing {side} order on {pair} (attempt {attempt+1}/3): {str(e)}")
+            time.sleep(API_RATE_LIMIT_SLEEP)
+    log_trade(f"Failed to execute {side} order on {pair} after 3 attempts")
+    return None
 
 async def main():
     # Initial log to confirm bot start
@@ -159,7 +168,7 @@ async def main():
         except KeyError:
             continue
     if btc_balance == 0:
-        log_trade("Warning: No BTC balance found, assuming 0. Please check Kraken account for BTC availability.")
+        log_trade("Warning: No BTC balance found, assuming 0. Please check Kraken account for BTC availability (may be locked in open orders, long positions, or sub-account).")
 
     trade_state = {
         'stage': 0,
@@ -248,7 +257,7 @@ async def main():
                 log_trade(f"Checking buy conditions: RSI={rsi:.1f}, Stage={trade_state['stage']}")
                 if trade_state['stage'] == 0 and rsi <= RSI_BUY_THRESHOLDS[0]:
                     # First buy: 20%
-                    btc_volume = (FIRST_BUY_PCT * portfolio_value) / btc_price
+                    btc_volume = max((FIRST_BUY_PCT * portfolio_value) / btc_price, MIN_BTC_VOLUME)
                     hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
@@ -266,7 +275,7 @@ async def main():
                 elif trade_state['stage'] == 1 and (rsi <= RSI_BUY_THRESHOLDS[1] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[0])):
                     # Second buy: 30% of remaining
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
-                    btc_volume = (SECOND_BUY_PCT * remaining_value) / btc_price
+                    btc_volume = max((SECOND_BUY_PCT * remaining_value) / btc_price, MIN_BTC_VOLUME)
                     hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
@@ -281,7 +290,7 @@ async def main():
                 elif trade_state['stage'] == 2 and (rsi <= RSI_BUY_THRESHOLDS[2] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[1])):
                     # All-in buy
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
-                    btc_volume = remaining_value / btc_price
+                    btc_volume = max(remaining_value / btc_price, MIN_BTC_VOLUME)
                     hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
@@ -298,7 +307,7 @@ async def main():
                 log_trade(f"Checking sell conditions: RSI={rsi:.1f}, Stage={trade_state['sell_stage']}")
                 if rsi > RSI_SELL_THRESHOLDS[0] and trade_state['sell_stage'] == 0:
                     # First sell: 20%
-                    btc_volume = FIRST_SELL_PCT * trade_state['btc_volume']
+                    btc_volume = max(FIRST_SELL_PCT * trade_state['btc_volume'], MIN_BTC_VOLUME)
                     hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting sell: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
@@ -309,7 +318,7 @@ async def main():
                 
                 elif rsi > RSI_SELL_THRESHOLDS[1] and trade_state['sell_stage'] == 1:
                     # Second sell: 30% of remaining
-                    btc_volume = SECOND_SELL_PCT * trade_state['btc_volume']
+                    btc_volume = max(SECOND_SELL_PCT * trade_state['btc_volume'], MIN_BTC_VOLUME)
                     hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting sell: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
@@ -320,7 +329,7 @@ async def main():
                 
                 elif (rsi >= RSI_SELL_THRESHOLDS[2] or btc_price < ema or btc_price < trade_state['avg_entry'] * (1 - 0.8 * atr / btc_price) or btc_price > trade_state['avg_entry'] * 1.012) and trade_state['btc_volume'] > 0:
                     # Sell all
-                    btc_volume = trade_state['btc_volume']
+                    btc_volume = max(trade_state['btc_volume'], MIN_BTC_VOLUME)
                     hedge_volume = trade_state['hedge_volume']
                     log_trade(f"Attempting sell: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
