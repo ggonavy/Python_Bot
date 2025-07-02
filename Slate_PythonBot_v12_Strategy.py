@@ -52,9 +52,9 @@ HEDGE_MAX_DURATION = 3600  # 1 hour in seconds
 LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30  # Seconds
 MIN_USD_BALANCE = 100  # Minimum USD balance required
-HEALTH_CHECK_INTERVAL = 900  # Increased to 15 minutes to reduce API calls
+HEALTH_CHECK_INTERVAL = 900  # 15 minutes to reduce API calls
 DEBUG_MODE = True  # Enable debug logging
-API_RATE_LIMIT_SLEEP = 6  # Increased to avoid public call frequency exceeded
+API_RATE_LIMIT_SLEEP = 6  # Seconds to avoid public call frequency exceeded
 
 def log_trade(message):
     with open(LOG_FILE, 'a') as f:
@@ -67,17 +67,29 @@ def get_ohlc_data(pair):
     if not pair:
         log_trade(f"No trade: Invalid pair ({pair})")
         return None
-    try:
-        ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
-        log_trade(f"Successfully fetched OHLC data for {pair}")
-        time.sleep(API_RATE_LIMIT_SLEEP)  # Increased to avoid rate limits
-        return ohlc
-    except Exception as e:
-        log_trade(f"Error fetching OHLC data for {pair}: {str(e)}")
-        return None
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
+            log_trade(f"Successfully fetched OHLC data for {pair}, rows: {len(ohlc)}")
+            time.sleep(API_RATE_LIMIT_SLEEP)
+            return ohlc
+        except Exception as e:
+            log_trade(f"Error fetching OHLC data for {pair} (attempt {attempt+1}/3): {str(e)}")
+            time.sleep(API_RATE_LIMIT_SLEEP)
+    log_trade(f"Failed to fetch OHLC data for {pair} after 3 attempts")
+    return None
 
 def calculate_indicators(btc_df, hedge_df):
     try:
+        # Align DataFrames by trimming to shortest length and resetting index
+        if hedge_df is not None:
+            min_length = min(len(btc_df), len(hedge_df))
+            btc_df = btc_df.iloc[-min_length:].reset_index(drop=True).copy()
+            hedge_df = hedge_df.iloc[-min_length:].reset_index(drop=True).copy()
+            log_trade(f"Aligned DataFrames: BTC rows={len(btc_df)}, Hedge rows={len(hedge_df)}")
+        else:
+            btc_df = btc_df.reset_index(drop=True).copy()
+
         btc_df['RSI'] = RSIIndicator(btc_df['close'], RSI_PERIOD).rsi()
         btc_df['EMA'] = EMAIndicator(btc_df['close'], EMA_PERIOD).ema_indicator()
         btc_df['ATR'] = AverageTrueRange(btc_df['high'], btc_df['low'], btc_df['close'], ATR_PERIOD).average_true_range()
@@ -238,6 +250,7 @@ async def main():
                     # First buy: 20%
                     btc_volume = (FIRST_BUY_PCT * portfolio_value) / btc_price
                     hedge_volume = btc_volume * hedge_ratio
+                    log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
                     execute_trade(HEDGE_PAIR, 'sell', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     trade_state = {
@@ -255,6 +268,7 @@ async def main():
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
                     btc_volume = (SECOND_BUY_PCT * remaining_value) / btc_price
                     hedge_volume = btc_volume * hedge_ratio
+                    log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
                     execute_trade(HEDGE_PAIR, 'sell', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     total_btc = trade_state['btc_volume'] + btc_volume
@@ -269,6 +283,7 @@ async def main():
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
                     btc_volume = remaining_value / btc_price
                     hedge_volume = btc_volume * hedge_ratio
+                    log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
                     execute_trade(HEDGE_PAIR, 'sell', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     total_btc = trade_state['btc_volume'] + btc_volume
@@ -285,6 +300,7 @@ async def main():
                     # First sell: 20%
                     btc_volume = FIRST_SELL_PCT * trade_state['btc_volume']
                     hedge_volume = btc_volume * hedge_ratio
+                    log_trade(f"Attempting sell: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
                     execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     trade_state['btc_volume'] -= btc_volume
@@ -295,6 +311,7 @@ async def main():
                     # Second sell: 30% of remaining
                     btc_volume = SECOND_SELL_PCT * trade_state['btc_volume']
                     hedge_volume = btc_volume * hedge_ratio
+                    log_trade(f"Attempting sell: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
                     execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     trade_state['btc_volume'] -= btc_volume
@@ -305,6 +322,7 @@ async def main():
                     # Sell all
                     btc_volume = trade_state['btc_volume']
                     hedge_volume = trade_state['hedge_volume']
+                    log_trade(f"Attempting sell: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
                     execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     trade_state = {
