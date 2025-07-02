@@ -44,12 +44,12 @@ ATR_PERIOD = 14
 RSI_BUY_THRESHOLDS = [45, 38, 30]  # First, second, all-in
 RSI_SELL_THRESHOLDS = [65, 72, 80]  # First, second, all
 DIP_THRESHOLDS = [0.003, 0.006]  # 0.3%, 0.6% dips
-FIRST_BUY_PCT = 0.2
+FIRST_BUY_PCT = 0.2  # Restored to 20% for fiat-only start
 SECOND_BUY_PCT = 0.3
 FIRST_SELL_PCT = 0.2
 SECOND_SELL_PCT = 0.3
 STOP_LOSS_PCT = 0.03  # 3% stop-loss for aggressive trading
-MAX_EXPOSURE = 0.85  # Adjusted for 84% BTC exposure
+MAX_EXPOSURE = 0.85  # Adjusted for future BTC exposure
 BASE_HEDGE_RATIO = 0.5
 HEDGE_MAX_DURATION = 3600  # 1 hour in seconds
 LOG_FILE = 'trade_log.txt'
@@ -57,7 +57,7 @@ CYCLE_INTERVAL = 30  # Seconds
 MIN_USD_BALANCE = 100  # Minimum USD balance required
 HEALTH_CHECK_INTERVAL = 1200  # 20 minutes to reduce API calls
 DEBUG_MODE = True  # Enable debug logging
-API_RATE_LIMIT_SLEEP = 9  # Increased to avoid public call frequency exceeded
+API_RATE_LIMIT_SLEEP = 9  # Stable for public call frequency
 MIN_BTC_VOLUME = 0.0001  # Minimum BTC trade volume per Kraken requirements
 
 def log_trade(message):
@@ -172,11 +172,11 @@ async def main():
         except KeyError:
             continue
     if btc_balance == 0:
-        log_trade("Warning: No BTC balance found, assuming 0. Please check Kraken account for BTC availability (may be locked in open orders, long positions, or sub-account).")
+        log_trade("No BTC balance found, assuming fiat-only start.")
 
     # Calculate total portfolio value
-    btc_price = 106200  # Approximate from logs; will be updated in loop
-    portfolio_value = fiat_balance + (btc_balance * btc_price)
+    btc_price = 106535  # Updated from latest log
+    portfolio_value = fiat_balance  # Fiat-only start
     log_trade(f"Initial portfolio value: ${portfolio_value:.2f} (Fiat: ${fiat_balance:.2f}, BTC: {btc_balance:.6f} @ ${btc_price:.2f})")
 
     trade_state = {
@@ -209,7 +209,7 @@ async def main():
                         except KeyError:
                             continue
                     if btc_balance == 0:
-                        log_trade("Health check: Warning: No BTC balance found, assuming 0.")
+                        log_trade("Health check: No BTC balance found, assuming fiat-only.")
                     for code in usd_codes:
                         if code in balance.index:
                             fiat_balance = float(balance.loc[code].iloc[0])
@@ -248,7 +248,7 @@ async def main():
             hedge_name = HEDGE_PAIR.split('Z')[0] if HEDGE_PAIR else 'None'
             current_time = time.time()
 
-            # Update portfolio value with current BTC price
+            # Update portfolio value
             portfolio_value = fiat_balance + (btc_balance * btc_price)
             log_trade(f"Updated portfolio value: ${portfolio_value:.2f} (Fiat: ${fiat_balance:.2f}, BTC: {btc_balance:.6f} @ ${btc_price:.2f})")
 
@@ -279,13 +279,13 @@ async def main():
                 log_trade(f"No trade: Insufficient USD balance (${fiat_balance:.2f}) for buy (${buy_value:.2f})")
                 await asyncio.sleep(CYCLE_INTERVAL)
                 continue
+            btc_volume = max((FIRST_BUY_PCT * portfolio_value) / btc_price, MIN_BTC_VOLUME)
 
             # Buy logic
             if btc_price > ema and 30 < rsi < 70:  # Stagnant/trending market
                 log_trade(f"Checking buy conditions: RSI={rsi:.1f}, Stage={trade_state['stage']}")
                 if trade_state['stage'] == 0 and rsi <= RSI_BUY_THRESHOLDS[0]:
-                    # First buy: 20%
-                    btc_volume = max((FIRST_BUY_PCT * portfolio_value) / btc_price, MIN_BTC_VOLUME)
+                    # First buy
                     hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     order = execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
@@ -300,20 +300,20 @@ async def main():
                             'hedge_start_time': time.time(),
                             'sell_stage': 0
                         }
-                        fiat_balance -= btc_volume * btc_price  # Update fiat balance
-                        btc_balance += btc_volume  # Update BTC balance
+                        fiat_balance -= btc_volume * btc_price
+                        btc_balance += btc_volume
                         log_trade(f"Balance updated: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}")
                 
                 elif trade_state['stage'] == 1 and (rsi <= RSI_BUY_THRESHOLDS[1] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[0])):
                     # Second buy: 30% of remaining
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
-                    btc_volume = max((SECOND_BUY_PCT * remaining_value) / btc_price, MIN_BTC_VOLUME)
-                    hedge_volume = btc_volume * hedge_ratio
-                    buy_value = btc_volume * btc_price
+                    buy_value = SECOND_BUY_PCT * remaining_value
                     if fiat_balance < buy_value:
                         log_trade(f"No trade: Insufficient USD balance (${fiat_balance:.2f}) for buy (${buy_value:.2f})")
                         await asyncio.sleep(CYCLE_INTERVAL)
                         continue
+                    btc_volume = max((SECOND_BUY_PCT * remaining_value) / btc_price, MIN_BTC_VOLUME)
+                    hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     order = execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
                     if order:
@@ -323,7 +323,7 @@ async def main():
                         trade_state['stage'] = 2
                         trade_state['btc_volume'] = total_btc
                         trade_state['hedge_volume'] += hedge_volume
-                        trade_state['hedge_start_time'] = time.time()
+                        trade_state['hedge_start_time': time.time()
                         fiat_balance -= btc_volume * btc_price
                         btc_balance += btc_volume
                         log_trade(f"Balance updated: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}")
@@ -331,13 +331,13 @@ async def main():
                 elif trade_state['stage'] == 2 and (rsi <= RSI_BUY_THRESHOLDS[2] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[1])):
                     # All-in buy
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
-                    btc_volume = max(remaining_value / btc_price, MIN_BTC_VOLUME)
-                    hedge_volume = btc_volume * hedge_ratio
-                    buy_value = btc_volume * btc_price
+                    buy_value = remaining_value
                     if fiat_balance < buy_value:
                         log_trade(f"No trade: Insufficient USD balance (${fiat_balance:.2f}) for buy (${buy_value:.2f})")
                         await asyncio.sleep(CYCLE_INTERVAL)
                         continue
+                    btc_volume = max(remaining_value / btc_price, MIN_BTC_VOLUME)
+                    hedge_volume = btc_volume * hedge_ratio
                     log_trade(f"Attempting buy: BTC volume={btc_volume:.6f}, Hedge volume={hedge_volume:.6f}")
                     order = execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
                     if order:
@@ -347,7 +347,7 @@ async def main():
                         trade_state['stage'] = 3
                         trade_state['btc_volume'] = total_btc
                         trade_state['hedge_volume'] += hedge_volume
-                        trade_state['hedge_start_time'] = time.time()
+                        trade_state['hedge_start_time': time.time()
                         fiat_balance -= btc_volume * btc_price
                         btc_balance += btc_volume
                         log_trade(f"Balance updated: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}")
