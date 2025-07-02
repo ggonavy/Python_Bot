@@ -55,12 +55,20 @@ MIN_USD_BALANCE = 100  # Minimum USD balance required
 HEALTH_CHECK_INTERVAL = 300  # Log health check every 5 minutes
 DEBUG_MODE = True  # Enable debug logging
 
+def log_trade(message):
+    with open(LOG_FILE, 'a') as f:
+        timestamp = datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S')
+        f.write(f"{timestamp} | {message}\n")
+        f.flush()  # Force write to file
+    print(f"{timestamp} | {message}")
+
 def get_ohlc_data(pair):
     if not pair:
         log_trade(f"No trade: Invalid pair ({pair})")
         return None
     try:
         ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
+        log_trade(f"Successfully fetched OHLC data for {pair}")
         time.sleep(1)  # API rate limit
         return ohlc
     except Exception as e:
@@ -76,14 +84,8 @@ def calculate_indicators(btc_df, hedge_df):
         btc_df['Hedge_Ratio'] = np.where(corr < 0.7, BASE_HEDGE_RATIO * 0.6, BASE_HEDGE_RATIO)
     else:
         btc_df['Hedge_Ratio'] = 0
+    log_trade("Indicators calculated: RSI, EMA, ATR, Hedge Ratio")
     return btc_df, hedge_df
-
-def log_trade(message):
-    with open(LOG_FILE, 'a') as f:
-        timestamp = datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S')
-        f.write(f"{timestamp} | {message}\n")
-        f.flush()  # Force write to file
-    print(f"{timestamp} | {message}")
 
 def execute_trade(pair, side, price, volume):
     if not pair or volume <= 0:
@@ -99,8 +101,10 @@ def execute_trade(pair, side, price, volume):
         return None
 
 async def main():
+    # Initial log to confirm bot start
+    log_trade("Bot starting: Initializing Kraken API and account status")
+
     # Health check
-    log_trade("Bot starting: Verifying API connectivity and account status")
     try:
         server_time = k.get_server_time()
         log_trade(f"Kraken API connected: Server time {server_time[1]}")  # Tuple index 1 for RFC1123 time
@@ -301,4 +305,5 @@ async def main():
             await asyncio.sleep(CYCLE_INTERVAL)
 
 if __name__ == "__main__":
+    log_trade("Bot initialized: Entering main loop")
     asyncio.run(main())
