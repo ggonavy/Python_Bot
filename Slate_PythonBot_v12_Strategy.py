@@ -11,6 +11,10 @@ import time
 import os
 from datetime import datetime
 import pytz
+import warnings
+
+# Suppress FutureWarnings from pykrakenapi and pandas
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 # Initialize Kraken API
 api_key = os.getenv('KRAKEN_API_KEY')
@@ -46,6 +50,7 @@ BASE_HEDGE_RATIO = 0.5
 HEDGE_MAX_DURATION = 3600  # 1 hour in seconds
 LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30  # Seconds
+MIN_USD_BALANCE = 100  # Minimum USD balance required
 
 def get_ohlc_data(pair):
     if not pair:
@@ -100,9 +105,9 @@ async def main():
                 portfolio_value = float(balance.loc[code].iloc[0])
                 log_trade(f"Portfolio balance found: {code} = ${portfolio_value:.2f}")
                 break
-        if portfolio_value is None or portfolio_value < 100:
-            log_trade(f"Error: No sufficient USD balance found in {usd_codes}. Available balances: {balance.index.tolist()}. Minimum $100 required.")
-            raise ValueError(f"No sufficient USD balance found in {usd_codes}. Ensure account has at least $100 in USD, USDT, or equivalent.")
+        if portfolio_value is None or portfolio_value < MIN_USD_BALANCE:
+            log_trade(f"Error: No sufficient USD balance found in {usd_codes}. Available balances: {balance.index.tolist()}. Minimum ${MIN_USD_BALANCE} required.")
+            raise ValueError(f"No sufficient USD balance found in {usd_codes}. Ensure account has at least ${MIN_USD_BALANCE} in USD, USDT, or equivalent.")
     except Exception as e:
         log_trade(f"Error fetching portfolio balance: {str(e)}. Available balances: {balance.index.tolist() if balance is not None else 'None'}")
         raise ValueError("Failed to fetch portfolio balance. Check API key permissions, Kraken status, or account funding.")
@@ -140,6 +145,12 @@ async def main():
 
             # Log state
             log_trade(f"Price: ${btc_price:.2f} | RSI: {rsi:.1f} | EMA: ${ema:.2f} | ATR: {atr:.2f} | Stage: {trade_state['stage']} | Hedge: {hedge_ratio:.2f}x {hedge_name}")
+
+            # Check if trading conditions are met
+            if not (30 < rsi < 70 and btc_price > ema):
+                log_trade(f"No trade: RSI ({rsi:.1f}) outside 30-70 or price (${btc_price:.2f}) below EMA (${ema:.2f})")
+                await asyncio.sleep(CYCLE_INTERVAL)
+                continue
 
             # Check exposure
             btc_exposure = float(k.get_account_balance()['XXBT'].iloc[0]) * btc_price
