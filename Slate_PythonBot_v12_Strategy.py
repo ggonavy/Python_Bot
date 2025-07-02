@@ -93,6 +93,16 @@ def execute_trade(pair, side, price, volume):
         return None
 
 async def main():
+    # Health check
+    log_trade("Bot starting: Verifying API connectivity and account status")
+    try:
+        # Test API connectivity
+        server_time = k.get_server_time()
+        log_trade(f"Kraken API connected: Server time {server_time['rfc1123']}")
+    except Exception as e:
+        log_trade(f"Error connecting to Kraken API: {str(e)}")
+        raise ValueError("Failed to connect to Kraken API. Check API key permissions or Kraken status.")
+
     # Try multiple USD currency codes
     usd_codes = ['ZUSD', 'USD', 'USDT']
     portfolio_value = None
@@ -147,15 +157,19 @@ async def main():
             log_trade(f"Price: ${btc_price:.2f} | RSI: {rsi:.1f} | EMA: ${ema:.2f} | ATR: {atr:.2f} | Stage: {trade_state['stage']} | Hedge: {hedge_ratio:.2f}x {hedge_name}")
 
             # Check if trading conditions are met
-            if not (30 < rsi < 70 and btc_price > ema):
-                log_trade(f"No trade: RSI ({rsi:.1f}) outside 30-70 or price (${btc_price:.2f}) below EMA (${ema:.2f})")
+            if not (30 < rsi < 70):
+                log_trade(f"No trade: RSI ({rsi:.1f}) outside 30-70 range")
+                await asyncio.sleep(CYCLE_INTERVAL)
+                continue
+            if not (btc_price > ema):
+                log_trade(f"No trade: Price (${btc_price:.2f}) below EMA (${ema:.2f})")
                 await asyncio.sleep(CYCLE_INTERVAL)
                 continue
 
             # Check exposure
             btc_exposure = float(k.get_account_balance()['XXBT'].iloc[0]) * btc_price
             if btc_exposure / portfolio_value > MAX_EXPOSURE:
-                log_trade("Max exposure reached, skipping trades")
+                log_trade("No trade: Max exposure reached (BTC: ${:.2f}, Limit: ${:.2f})".format(btc_exposure, portfolio_value * MAX_EXPOSURE))
                 await asyncio.sleep(CYCLE_INTERVAL)
                 continue
 
