@@ -98,7 +98,7 @@ async def main():
     try:
         # Test API connectivity
         server_time = k.get_server_time()
-        log_trade(f"Kraken API connected: Server time {server_time['rfc1123']}")
+        log_trade(f"Kraken API connected: Server time {server_time[1]}")  # Access tuple index 1 for RFC1123 time
     except Exception as e:
         log_trade(f"Error connecting to Kraken API: {str(e)}")
         raise ValueError("Failed to connect to Kraken API. Check API key permissions or Kraken status.")
@@ -169,7 +169,7 @@ async def main():
             # Check exposure
             btc_exposure = float(k.get_account_balance()['XXBT'].iloc[0]) * btc_price
             if btc_exposure / portfolio_value > MAX_EXPOSURE:
-                log_trade("No trade: Max exposure reached (BTC: ${:.2f}, Limit: ${:.2f})".format(btc_exposure, portfolio_value * MAX_EXPOSURE))
+                log_trade(f"No trade: Max exposure reached (BTC: ${btc_exposure:.2f}, Limit: ${portfolio_value * MAX_EXPOSURE:.2f})")
                 await asyncio.sleep(CYCLE_INTERVAL)
                 continue
 
