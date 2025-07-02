@@ -88,11 +88,24 @@ def execute_trade(pair, side, price, volume):
         return None
 
 async def main():
+    # Try multiple USD currency codes
+    usd_codes = ['ZUSD', 'USD', 'USDT']
+    portfolio_value = None
+    balance = None
     try:
-        portfolio_value = float(k.get_account_balance()['ZUSD'].iloc[0])
+        balance = k.get_account_balance()
+        log_trade(f"Available balances: {balance.index.tolist()}")
+        for code in usd_codes:
+            if code in balance.index:
+                portfolio_value = float(balance.loc[code].iloc[0])
+                log_trade(f"Portfolio balance found: {code} = ${portfolio_value:.2f}")
+                break
+        if portfolio_value is None or portfolio_value < 100:
+            log_trade(f"Error: No sufficient USD balance found in {usd_codes}. Available balances: {balance.index.tolist()}. Minimum $100 required.")
+            raise ValueError(f"No sufficient USD balance found in {usd_codes}. Ensure account has at least $100 in USD, USDT, or equivalent.")
     except Exception as e:
-        log_trade(f"Error fetching portfolio balance: {str(e)}")
-        raise ValueError("Failed to fetch portfolio balance. Check API key permissions and Kraken status.")
+        log_trade(f"Error fetching portfolio balance: {str(e)}. Available balances: {balance.index.tolist() if balance is not None else 'None'}")
+        raise ValueError("Failed to fetch portfolio balance. Check API key permissions, Kraken status, or account funding.")
 
     trade_state = {
         'stage': 0,
