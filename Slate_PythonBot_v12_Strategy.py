@@ -54,6 +54,7 @@ CYCLE_INTERVAL = 30  # Seconds
 MIN_USD_BALANCE = 100  # Minimum USD balance required
 HEALTH_CHECK_INTERVAL = 300  # Log health check every 5 minutes
 DEBUG_MODE = True  # Enable debug logging
+API_RATE_LIMIT_SLEEP = 4  # Increased to avoid public call frequency exceeded
 
 def log_trade(message):
     with open(LOG_FILE, 'a') as f:
@@ -69,7 +70,7 @@ def get_ohlc_data(pair):
     try:
         ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
         log_trade(f"Successfully fetched OHLC data for {pair}")
-        time.sleep(1)  # API rate limit
+        time.sleep(API_RATE_LIMIT_SLEEP)  # Increased to avoid rate limits
         return ohlc
     except Exception as e:
         log_trade(f"Error fetching OHLC data for {pair}: {str(e)}")
@@ -98,7 +99,7 @@ def execute_trade(pair, side, price, volume):
     try:
         order = k.add_order(pair, side, 'market', volume, price=price)
         log_trade(f"Executed {side} order on {pair}: Price: ${price:.2f}, Volume: {volume:.6f}")
-        time.sleep(1)
+        time.sleep(API_RATE_LIMIT_SLEEP)
         return order
     except Exception as e:
         log_trade(f"Error executing {side} order on {pair}: {str(e)}")
@@ -111,7 +112,7 @@ async def main():
     # Health check
     try:
         server_time = k.get_server_time()
-        log_trade(f"Kraken API connected: Server time {server_time[1]}")  # Tuple index 1 for RFC1123 time
+        log_trade(f"Kraken API connected: Server time {server_time[1]}")
     except Exception as e:
         log_trade(f"Error connecting to Kraken API: {str(e)}")
         raise ValueError("Failed to connect to Kraken API. Check API key permissions or Kraken status.")
@@ -134,6 +135,19 @@ async def main():
     except Exception as e:
         log_trade(f"Error fetching portfolio balance: {str(e)}. Available balances: {balance.index.tolist() if balance is not None else 'None'}")
         raise ValueError("Failed to fetch portfolio balance. Check API key permissions, Kraken status, or account funding.")
+
+    # Check BTC balance
+    btc_balance = 0
+    btc_codes = ['XXBT', 'XBT', 'BTC']  # Expanded BTC codes
+    for code in btc_codes:
+        try:
+            btc_balance = float(balance[code].iloc[0])
+            log_trade(f"BTC balance found: {code} = {btc_balance:.6f} BTC")
+            break
+        except KeyError:
+            continue
+    if btc_balance == 0:
+        log_trade("Warning: No BTC balance found, assuming 0. Please check Kraken account for BTC availability.")
 
     trade_state = {
         'stage': 0,
@@ -201,27 +215,16 @@ async def main():
                 continue
 
             # Check exposure
-            try:
-                btc_balance = float(k.get_account_balance()['XXBT'].iloc[0])
-            except KeyError:
-                btc_balance = 0
-                log_trade("No BTC balance found, assuming 0")
             btc_exposure = btc_balance * btc_price
             if btc_exposure / portfolio_value > MAX_EXPOSURE:
                 log_trade(f"No trade: Max exposure reached (BTC: ${btc_exposure:.2f}, Limit: ${portfolio_value * MAX_EXPOSURE:.2f})")
                 await asyncio.sleep(CYCLE_INTERVAL)
                 continue
 
-            # Check hedge duration
-            if HEDGE_PAIR and trade_state['hedge_volume'] > 0 and (current_time - trade_state['hedge_start_time']) > HEDGE_MAX_DURATION:
-                execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, trade_state['hedge_volume'])
-                trade_state['hedge_volume'] = 0
-                trade_state['hedge_start_time'] = 0
-                log_trade("Closed hedge due to max duration")
-
             # Buy logic
             if btc_price > ema and 30 < rsi < 70:  # Stagnant/trending market
-                if trade_state['stage'] == 0 and rsi < RSI_BUY_THRESHOLDS[0]:
+                log_trade(f"Checking buy conditions: RSI={rsi:.1f}, Stage={trade_state['stage']}")
+                if trade_state['stage'] == 0 and rsi <= RSI_BUY_THRESHOLDS[0]:
                     # First buy: 20%
                     btc_volume = (FIRST_BUY_PCT * portfolio_value) / btc_price
                     hedge_volume = btc_volume * hedge_ratio
@@ -237,7 +240,7 @@ async def main():
                         'sell_stage': 0
                     }
                 
-                elif trade_state['stage'] == 1 and (rsi < RSI_BUY_THRESHOLDS[1] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[0])):
+                elif trade_state['stage'] == 1 and (rsi <= RSI_BUY_THRESHOLDS[1] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[0])):
                     # Second buy: 30% of remaining
                     remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
                     btc_volume = (SECOND_BUY_PCT * remaining_value) / btc_price
@@ -267,6 +270,7 @@ async def main():
 
             # Sell logic
             if trade_state['stage'] > 0:
+                log_trade(f"Checking sell conditions: RSI={rsi:.1f}, Stage={trade_state['sell_stage']}")
                 if rsi > RSI_SELL_THRESHOLDS[0] and trade_state['sell_stage'] == 0:
                     # First sell: 20%
                     btc_volume = FIRST_SELL_PCT * trade_state['btc_volume']
