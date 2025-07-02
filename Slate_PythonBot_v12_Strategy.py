@@ -26,6 +26,7 @@ if not api_key or not api_secret:
     with open('trade_log.txt', 'a') as f:
         timestamp = datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S')
         f.write(f"{timestamp} | {error_msg}\n")
+        f.flush()
     raise ValueError(error_msg)
 
 api = krakenex.API(key=api_key, secret=api_secret)
@@ -52,6 +53,7 @@ LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30  # Seconds
 MIN_USD_BALANCE = 100  # Minimum USD balance required
 HEALTH_CHECK_INTERVAL = 300  # Log health check every 5 minutes
+DEBUG_MODE = True  # Enable debug logging
 
 def get_ohlc_data(pair):
     if not pair:
@@ -79,10 +81,12 @@ def log_trade(message):
     with open(LOG_FILE, 'a') as f:
         timestamp = datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S')
         f.write(f"{timestamp} | {message}\n")
+        f.flush()  # Force write to file
     print(f"{timestamp} | {message}")
 
 def execute_trade(pair, side, price, volume):
     if not pair or volume == 0:
+        log_trade(f"No trade executed: Invalid pair ({pair}) or volume ({volume})")
         return None
     try:
         order = k.add_order(pair, side, 'market', volume, price=price)
@@ -147,6 +151,10 @@ async def main():
                     log_trade(f"Health check: Error connecting to Kraken API: {str(e)}")
                 last_health_check = time.time()
 
+            # Debug mode: Log loop start
+            if DEBUG_MODE:
+                log_trade("Debug: Starting trade cycle")
+
             # Fetch data
             btc_df = get_ohlc_data(BTC_PAIR)
             hedge_df = get_ohlc_data(HEDGE_PAIR) if HEDGE_PAIR else None
@@ -167,7 +175,7 @@ async def main():
             current_time = time.time()
 
             # Log state
-            log_trade(f"Price: ${btc_price:.2f} | RSI: {rsi:.1f} | EMA: ${ema:.2f} | ATR: {atr:.2f} | Stage: {trade_state['stage']} | Hedge: {hedge_ratio:.2f}x {hedge_name}")
+            log_trade(f"Price: ${btc_price:.2f} | RSI: {rsi:.1f} | EMA: ${ema:.2f} | ATR: ${atr:.2f} | Stage: {trade_state['stage']} | Hedge: {hedge_ratio:.2f}x {hedge_name}")
 
             # Check if trading conditions are met
             if not (30 < rsi < 70):
@@ -276,6 +284,10 @@ async def main():
                         'hedge_start_time': 0,
                         'sell_stage': 0
                     }
+
+            # Debug mode: Log loop end
+            if DEBUG_MODE:
+                log_trade("Debug: Trade cycle completed")
 
             await asyncio.sleep(CYCLE_INTERVAL)
         except Exception as e:
