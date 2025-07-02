@@ -13,12 +13,16 @@ from datetime import datetime
 import pytz
 
 # Initialize Kraken API
-api_key = os.getenv('haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM')
-api_secret = os.getenv('MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==')
+api_key = os.getenv('KRAKEN_API_KEY')
+api_secret = os.getenv('KRAKEN_API_SECRET')
 
 # Verify API credentials
 if not api_key or not api_secret:
-    raise ValueError("KRAKEN_API_KEY or KRAKEN_API_SECRET not set in environment variables. Please configure in Render dashboard.")
+    error_msg = "KRAKEN_API_KEY or KRAKEN_API_SECRET not set in environment variables. Please configure in Render dashboard."
+    with open('trade_log.txt', 'a') as f:
+        timestamp = datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S')
+        f.write(f"{timestamp} | {error_msg}\n")
+    raise ValueError(error_msg)
 
 api = krakenex.API(key=api_key, secret=api_secret)
 k = KrakenAPI(api)
