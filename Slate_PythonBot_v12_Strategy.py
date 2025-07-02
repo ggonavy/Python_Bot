@@ -13,7 +13,14 @@ from datetime import datetime
 import pytz
 
 # Initialize Kraken API
-api = krakenex.API(key=os.getenv('haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM'), secret=os.getenv('MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q=='))
+api_key = os.getenv('haDXxKlf3s04IL8OZsBy5j+kn7ZTS8LjnkwZvHjpmL+0sYZj8IfwxniM')
+api_secret = os.getenv('MvohzPBpHaG0S3vxrMtldcnGFoa+9cXLvJ8IxrwwOduSDaLgxPxG2YK/9cRQCEOnYoSmR22ZzUJr4CPIXDh19Q==')
+
+# Verify API credentials
+if not api_key or not api_secret:
+    raise ValueError("KRAKEN_API_KEY or KRAKEN_API_SECRET not set in environment variables. Please configure in Render dashboard.")
+
+api = krakenex.API(key=api_key, secret=api_secret)
 k = KrakenAPI(api)
 
 # Configuration
@@ -37,10 +44,15 @@ LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30  # Seconds
 
 def get_ohlc_data(pair):
-    if not pair: return None
-    ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
-    time.sleep(1)  # API rate limit
-    return ohlc
+    if not pair:
+        return None
+    try:
+        ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
+        time.sleep(1)  # API rate limit
+        return ohlc
+    except Exception as e:
+        log_trade(f"Error fetching OHLC data for {pair}: {str(e)}")
+        return None
 
 def calculate_indicators(btc_df, hedge_df):
     btc_df['RSI'] = RSIIndicator(btc_df['close'], RSI_PERIOD).rsi()
@@ -60,7 +72,8 @@ def log_trade(message):
     print(f"{timestamp} | {message}")
 
 def execute_trade(pair, side, price, volume):
-    if not pair or volume == 0: return None
+    if not pair or volume == 0:
+        return None
     try:
         order = k.add_order(pair, side, 'market', volume, price=price)
         log_trade(f"Executed {side} order on {pair}: Price: ${price:.2f}, Volume: {volume:.6f}")
@@ -71,7 +84,12 @@ def execute_trade(pair, side, price, volume):
         return None
 
 async def main():
-    portfolio_value = float(k.get_account_balance()['ZUSD'].iloc[0])
+    try:
+        portfolio_value = float(k.get_account_balance()['ZUSD'].iloc[0])
+    except Exception as e:
+        log_trade(f"Error fetching portfolio balance: {str(e)}")
+        raise ValueError("Failed to fetch portfolio balance. Check API key permissions and Kraken status.")
+
     trade_state = {
         'stage': 0,
         'entry_price': 0,
@@ -87,6 +105,11 @@ async def main():
             # Fetch data
             btc_df = get_ohlc_data(BTC_PAIR)
             hedge_df = get_ohlc_data(HEDGE_PAIR) if HEDGE_PAIR else None
+            if btc_df is None or (HEDGE_PAIR and hedge_df is None):
+                log_trade("Failed to fetch market data, retrying...")
+                await asyncio.sleep(CYCLE_INTERVAL)
+                continue
+            
             btc_df, hedge_df = calculate_indicators(btc_df, hedge_df)
             
             # Current values
