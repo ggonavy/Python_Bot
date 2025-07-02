@@ -57,6 +57,7 @@ DEBUG_MODE = True  # Enable debug logging
 
 def get_ohlc_data(pair):
     if not pair:
+        log_trade(f"No trade: Invalid pair ({pair})")
         return None
     try:
         ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True)
@@ -85,7 +86,7 @@ def log_trade(message):
     print(f"{timestamp} | {message}")
 
 def execute_trade(pair, side, price, volume):
-    if not pair or volume == 0:
+    if not pair or volume <= 0:
         log_trade(f"No trade executed: Invalid pair ({pair}) or volume ({volume})")
         return None
     try:
@@ -188,7 +189,12 @@ async def main():
                 continue
 
             # Check exposure
-            btc_exposure = float(k.get_account_balance()['XXBT'].iloc[0]) * btc_price
+            try:
+                btc_balance = float(k.get_account_balance()['XXBT'].iloc[0])
+            except KeyError:
+                btc_balance = 0
+                log_trade("No BTC balance found, assuming 0")
+            btc_exposure = btc_balance * btc_price
             if btc_exposure / portfolio_value > MAX_EXPOSURE:
                 log_trade(f"No trade: Max exposure reached (BTC: ${btc_exposure:.2f}, Limit: ${portfolio_value * MAX_EXPOSURE:.2f})")
                 await asyncio.sleep(CYCLE_INTERVAL)
