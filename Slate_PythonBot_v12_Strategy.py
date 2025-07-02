@@ -52,9 +52,9 @@ HEDGE_MAX_DURATION = 3600  # 1 hour in seconds
 LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30  # Seconds
 MIN_USD_BALANCE = 100  # Minimum USD balance required
-HEALTH_CHECK_INTERVAL = 600  # Increased to 10 minutes to reduce API calls
+HEALTH_CHECK_INTERVAL = 900  # Increased to 15 minutes to reduce API calls
 DEBUG_MODE = True  # Enable debug logging
-API_RATE_LIMIT_SLEEP = 5  # Increased to avoid public call frequency exceeded
+API_RATE_LIMIT_SLEEP = 6  # Increased to avoid public call frequency exceeded
 
 def log_trade(message):
     with open(LOG_FILE, 'a') as f:
@@ -162,7 +162,7 @@ async def main():
 
     while True:
         try:
-            # Periodic health check (every 10 minutes)
+            # Periodic health check (every 15 minutes)
             if time.time() - last_health_check >= HEALTH_CHECK_INTERVAL:
                 log_trade("Health check: Bot running, checking API connectivity")
                 try:
