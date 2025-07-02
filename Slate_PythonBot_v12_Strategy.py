@@ -46,7 +46,7 @@ FIRST_BUY_PCT = 0.2
 SECOND_BUY_PCT = 0.3
 FIRST_SELL_PCT = 0.2
 SECOND_SELL_PCT = 0.3
-MAX_EXPOSURE = 0.85  # Increased to 85% to allow trading with 84% BTC exposure
+MAX_EXPOSURE = 0.85  # Adjusted for 84% BTC exposure
 BASE_HEDGE_RATIO = 0.5
 HEDGE_MAX_DURATION = 3600  # 1 hour in seconds
 LOG_FILE = 'trade_log.txt'
@@ -76,16 +76,20 @@ def get_ohlc_data(pair):
         return None
 
 def calculate_indicators(btc_df, hedge_df):
-    btc_df['RSI'] = RSIIndicator(btc_df['close'], RSI_PERIOD).rsi()
-    btc_df['EMA'] = EMAIndicator(btc_df['close'], EMA_PERIOD).ema_indicator()
-    btc_df['ATR'] = AverageTrueRange(btc_df['high'], btc_df['low'], btc_df['close'], ATR_PERIOD).average_true_range()
-    if hedge_df is not None:
-        corr = btc_df['close'].pct_change().rolling(20).corr(hedge_df['close'].pct_change())
-        btc_df['Hedge_Ratio'] = np.where(corr < 0.7, BASE_HEDGE_RATIO * 0.6, BASE_HEDGE_RATIO)
-    else:
-        btc_df['Hedge_Ratio'] = 0
-    log_trade("Indicators calculated: RSI, EMA, ATR, Hedge Ratio")
-    return btc_df, hedge_df
+    try:
+        btc_df['RSI'] = RSIIndicator(btc_df['close'], RSI_PERIOD).rsi()
+        btc_df['EMA'] = EMAIndicator(btc_df['close'], EMA_PERIOD).ema_indicator()
+        btc_df['ATR'] = AverageTrueRange(btc_df['high'], btc_df['low'], btc_df['close'], ATR_PERIOD).average_true_range()
+        if hedge_df is not None:
+            corr = btc_df['close'].pct_change().rolling(20).corr(hedge_df['close'].pct_change())
+            btc_df['Hedge_Ratio'] = np.where(corr < 0.7, BASE_HEDGE_RATIO * 0.6, BASE_HEDGE_RATIO)
+        else:
+            btc_df['Hedge_Ratio'] = 0
+        log_trade("Indicators calculated: RSI, EMA, ATR, Hedge Ratio")
+        return btc_df, hedge_df
+    except Exception as e:
+        log_trade(f"Error calculating indicators: {str(e)}")
+        return None, None
 
 def execute_trade(pair, side, price, volume):
     if not pair or volume <= 0:
@@ -169,6 +173,10 @@ async def main():
                 continue
             
             btc_df, hedge_df = calculate_indicators(btc_df, hedge_df)
+            if btc_df is None or (HEDGE_PAIR and hedge_df is None):
+                log_trade("Failed to calculate indicators, retrying...")
+                await asyncio.sleep(CYCLE_INTERVAL)
+                continue
             
             # Current values
             btc_price = btc_df['close'].iloc[-1]
