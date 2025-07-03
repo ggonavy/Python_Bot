@@ -10,23 +10,20 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# Kraken API setup
 k = krakenex.API(key=os.getenv('KRAKEN_API_KEY'), secret=os.getenv('KRAKEN_API_SECRET'))
 kraken = KrakenAPI(k)
 
-# Trading parameters
 PAIR = 'XXBTZUSD'
-INTERVAL = 15  # 15-minute candles
-SLEEP_INTERVAL = 3  # seconds
+INTERVAL = 15
+SLEEP_INTERVAL = 3
 BUY_LADDER = [47, 42, 37, 32]
 SELL_LADDER = [73, 77, 81, 85]
-POSITION_SIZE = 0.001  # BTC per trade (~$109 at $109K)
+POSITION_SIZE = 0.001
 RSI_PERIOD = 14
 EMA_PERIOD = 26
 ATR_PERIOD = 14
 
 def get_ohlc(pair=PAIR, interval=INTERVAL):
-    """Fetch OHLC data from Kraken."""
     try:
         ohlc, _ = kraken.get_ohlc_data(pair, interval=interval, ascending=True, since=int(time.time() - 7200))
         ohlc = ohlc.dropna()
@@ -40,7 +37,6 @@ def get_ohlc(pair=PAIR, interval=INTERVAL):
         return None
 
 def get_rsi(ohlc, period=RSI_PERIOD):
-    """Calculate RSI."""
     try:
         close = ohlc['close'].copy()
         if len(close) < period:
@@ -59,7 +55,6 @@ def get_rsi(ohlc, period=RSI_PERIOD):
         return None
 
 def get_ema(ohlc, period=EMA_PERIOD):
-    """Calculate EMA."""
     try:
         close = ohlc['close']
         ema = EMAIndicator(close, window=period).ema_indicator()
@@ -69,7 +64,6 @@ def get_ema(ohlc, period=EMA_PERIOD):
         return None
 
 def get_atr(ohlc, period=ATR_PERIOD):
-    """Calculate ATR."""
     try:
         atr = AverageTrueRange(ohlc['high'], ohlc['low'], ohlc['close'], window=period)
         return atr.average_true_range().iloc[-1]
@@ -78,7 +72,6 @@ def get_atr(ohlc, period=ATR_PERIOD):
         return None
 
 def execute_trade(side, volume, price):
-    """Execute trade on Kraken."""
     try:
         order = kraken.add_standard_order(
             pair=PAIR, type=side, ordertype='market', volume=volume
@@ -90,7 +83,6 @@ def execute_trade(side, volume, price):
         return False
 
 def check_trades(ohlc, balance):
-    """Check for buy/sell opportunities."""
     rsi = get_rsi(ohlc)
     price = ohlc['close'].iloc[-1]
     btc_balance = balance.get('XXBT', 0)
@@ -102,13 +94,11 @@ def check_trades(ohlc, balance):
 
     print(f"Checking trade: RSI {rsi:.2f}, BTC {btc_balance:.6f}, USD {usd_balance:.2f}")
 
-    # Buy logic
     for level in BUY_LADDER:
-        if rsi <= level and usd_balance > price * POSITION_SIZE * 1.01:  # 1% buffer
+        if rsi <= level and usd_balance > price * POSITION_SIZE * 1.01:
             print(f"Buy triggered: RSI {rsi:.2f} <= {level}, Price: ${price:.2f}")
             return execute_trade('buy', POSITION_SIZE, price)
 
-    # Sell logic
     for level in SELL_LADDER:
         if rsi >= level and btc_balance >= POSITION_SIZE:
             print(f"Sell triggered: RSI {rsi:.2f} >= {level}, Price: ${price:.2f}")
