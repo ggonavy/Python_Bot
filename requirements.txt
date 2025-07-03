@@ -1,8 +1,8 @@
 flask
-requests
+
 pandas
 ta
 pytz
 krakenex
 pykrakenapi
-aiohttp
+
