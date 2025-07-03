@@ -95,7 +95,7 @@ def get_ohlc_data(pair):
             time.sleep(API_RATE_LIMIT_SLEEP)
             return ohlc
         except Exception as e:
-            log_trade(f"Error fetching OHLC data for {pair} (attempt {attempt+1)/3): {str(e)}")
+            log_trade(f"Error fetching OHLC data for {pair} (attempt {attempt+1}/3): {str(e)}")
             time.sleep(API_RATE_LIMIT_SLEEP)
     log_trade(f"Failed to fetch OHLC data for {pair} after 3 attempts")
     return None
@@ -141,7 +141,7 @@ def execute_trade(pair, side, price, volume):
             time.sleep(API_RATE_LIMIT_SLEEP)
             return order
         except Exception as e:
-            log_trade(f"Error executing {side} order on {pair} (attempt {attempt+1)/3): {str(e)}")
+            log_trade(f"Error executing {side} order on {pair} (attempt {attempt+1}/3): {str(e)}")
             time.sleep(API_RATE_LIMIT_SLEEP)
     log_trade(f"Failed to execute {side} order on {pair} after 3 attempts")
     return None
