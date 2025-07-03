@@ -1,8 +1,3 @@
-ssing fields):
-yaml
-
-
-
 services:
   - type: web
     name: slate-bot
