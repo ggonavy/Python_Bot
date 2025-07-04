@@ -57,7 +57,7 @@ HEDGE_MAX_DURATION = 3600
 LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30
 MIN_USD_BALANCE = 100
-HEALTH_CHECK_INTERVAL = 7200  # 2 hours
+HEALTH_CHECK_INTERVAL = 10800  # 3 hours
 DEBUG_MODE = True
 API_RATE_LIMIT_SLEEP = 40  # Increased for rate limits
 MIN_BTC_VOLUME = 0.0001
@@ -201,7 +201,7 @@ async def main():
         log_trade(f"Error fetching balance: {str(e)}")
         raise ValueError("Failed to fetch balance")
 
-    btc_price = 109500.10  # From latest log
+    btc_price = 109507.00  # From latest log
     eth_price = 3500  # Approx ETH price
     portfolio_value = fiat_balance + (btc_balance * btc_price) + (eth_balance * eth_price)
     log_trade(f"Portfolio: ${portfolio_value:.2f} (Fiat: ${fiat_balance:.2f}, BTC: {btc_balance:.6f}, ETH: {eth_balance:.6f})")
@@ -216,7 +216,7 @@ async def main():
         'sell_stage': 0
     }
     last_ohlc_fetch = {'BTC': None, 'ETH': None, 'BTC_time': 0, 'ETH_time': 0}
-    cache_duration = 180  # Cache OHLC for 3 minutes
+    cache_duration = 240  # Cache OHLC for 4 minutes
     last_health_check = time.time()
 
     while True:
