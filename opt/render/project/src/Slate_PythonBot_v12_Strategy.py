@@ -57,9 +57,9 @@ HEDGE_MAX_DURATION = 3600
 LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30
 MIN_USD_BALANCE = 100
-HEALTH_CHECK_INTERVAL = 14400  # 4 hours
+HEALTH_CHECK_INTERVAL = 21600  # 6 hours
 DEBUG_MODE = True
-API_RATE_LIMIT_SLEEP = 50  # Increased for rate limits
+API_RATE_LIMIT_SLEEP = 60  # Increased for rate limits
 MIN_BTC_VOLUME = 0.0001
 ATR_MULTIPLIER = 1.0
 MIN_CANDLES = 15
@@ -201,7 +201,7 @@ async def main():
         log_trade(f"Error fetching balance: {str(e)}")
         raise ValueError("Failed to fetch balance")
 
-    btc_price = 109400.00  # From latest log
+    btc_price = 109387.00  # From latest log
     eth_price = 3500  # Approx ETH price
     portfolio_value = fiat_balance + (btc_balance * btc_price) + (eth_balance * eth_price)
     log_trade(f"Portfolio: ${portfolio_value:.2f} (Fiat: ${fiat_balance:.2f}, BTC: {btc_balance:.6f}, ETH: {eth_balance:.6f})")
@@ -216,7 +216,7 @@ async def main():
         'sell_stage': 0
     }
     last_ohlc_fetch = {'BTC': None, 'ETH': None, 'BTC_time': 0, 'ETH_time': 0}
-    cache_duration = 300  # Cache OHLC for 5 minutes
+    cache_duration = 360  # Cache OHLC for 6 minutes
     last_health_check = time.time()
 
     while True:
@@ -420,7 +420,7 @@ async def main():
                     order = execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
                     if order:
                         trade_state['hedge_volume'] = 0
-                        trade_state['hedge_start_time'] = 0
+                        trade_state['hedge_start_time': 0
                         eth_balance += hedge_volume
                         log_trade(f"Hedge timeout: Closed ETH hedge, Balance: ETH={eth_balance:.6f}")
                 elif rsi > RSI_SELL_THRESHOLDS[0] and trade_state['sell_stage'] == 0 and macd < macd_signal and btc_price >= profit_price:
