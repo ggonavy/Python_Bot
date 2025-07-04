@@ -57,9 +57,9 @@ HEDGE_MAX_DURATION = 3600
 LOG_FILE = 'trade_log.txt'
 CYCLE_INTERVAL = 30
 MIN_USD_BALANCE = 100
-HEALTH_CHECK_INTERVAL = 3600  # 1 hour
+HEALTH_CHECK_INTERVAL = 7200  # 2 hours
 DEBUG_MODE = True
-API_RATE_LIMIT_SLEEP = 30  # Increased for rate limits
+API_RATE_LIMIT_SLEEP = 40  # Increased for rate limits
 MIN_BTC_VOLUME = 0.0001
 ATR_MULTIPLIER = 1.0
 MIN_CANDLES = 15
@@ -72,13 +72,13 @@ def log_trade(message):
     print(f"{timestamp} | {message}")
     print(f"{timestamp} | {message}", file=sys.stderr)
 
-def get_ohlc_data(pair, retries=5, backoff_factor=2):
+def get_ohlc_data(pair, retries=5, backoff_factor=4):
     if not pair:
         log_trade(f"No trade: Invalid pair ({pair})")
         return None
     for attempt in range(retries):
         try:
-            ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True, count=200)
+            ohlc, _ = k.get_ohlc_data(pair, interval=INTERVAL, ascending=True, count=300)
             if len(ohlc) < MIN_CANDLES:
                 log_trade(f"Error: Only {len(ohlc)} candles for {pair}, need {MIN_CANDLES}")
                 time.sleep(API_RATE_LIMIT_SLEEP * (backoff_factor ** attempt))
@@ -201,7 +201,7 @@ async def main():
         log_trade(f"Error fetching balance: {str(e)}")
         raise ValueError("Failed to fetch balance")
 
-    btc_price = 109662.70  # From latest log
+    btc_price = 109500.10  # From latest log
     eth_price = 3500  # Approx ETH price
     portfolio_value = fiat_balance + (btc_balance * btc_price) + (eth_balance * eth_price)
     log_trade(f"Portfolio: ${portfolio_value:.2f} (Fiat: ${fiat_balance:.2f}, BTC: {btc_balance:.6f}, ETH: {eth_balance:.6f})")
@@ -216,7 +216,7 @@ async def main():
         'sell_stage': 0
     }
     last_ohlc_fetch = {'BTC': None, 'ETH': None, 'BTC_time': 0, 'ETH_time': 0}
-    cache_duration = 120  # Cache OHLC for 2 minutes
+    cache_duration = 180  # Cache OHLC for 3 minutes
     last_health_check = time.time()
 
     while True:
@@ -360,7 +360,7 @@ async def main():
                     trade_state['stage'] = 2
                     trade_state['btc_volume'] = total_btc
                     trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
-                    trade_state['hedge_start_time': time.time()
+                    trade_state['hedge_start_time'] = time.time()
                     fiat_balance -= btc_volume * btc_price
                     btc_balance += btc_volume
                     eth_balance -= hedge_volume
@@ -387,7 +387,7 @@ async def main():
                     fiat_balance -= btc_volume * btc_price
                     btc_balance += btc_volume
                     eth_balance -= hedge_volume
-                    log_trade(f"Balance: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}, ETH={eth_balance:].6f}")
+                    log_trade(f"Balance: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}, ETH={eth_balance:.6f}")
 
             # Sell logic (only for gains)
             if trade_state['stage'] > 0:
