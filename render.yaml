@@ -1,5 +1,5 @@
 services:
-  - type: web
+  - type: worker
     name: slate-bot
     env: python
     plan: standard
@@ -7,11 +7,14 @@ services:
     repo: https://github.com/ggonavy/slate-bot
     buildCommand: pip install -r requirements.txt
     startCommand: python Slate_PythonBot_v12_Strategy.py
+    rootDir: src
     envVars:
       - key: KRAKEN_API_KEY
         sync: false
       - key: KRAKEN_API_SECRET
         sync: false
-      - key: PORT
-        value: 8080
+      - key: KRAKEN_API_KEY_HEDGE
+        sync: false
+      - key: KRAKEN_API_SECRET_HEDGE
+        sync: false
     autoDeploy: false
