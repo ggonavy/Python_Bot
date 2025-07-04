@@ -61,11 +61,11 @@ MAX_EXPOSURE = 0.85
 BASE_HEDGE_RATIO = 0.5
 HEDGE_MAX_DURATION = 3600
 LOG_FILE = 'trade_log.txt'
-CYCLE_INTERVAL = 14400  # 240 minutes to avoid rate limits
+CYCLE_INTERVAL = 28800  # 480 minutes to avoid rate limits
 MIN_USD_BALANCE = 100
 HEALTH_CHECK_INTERVAL = 86400  # 24 hours
 DEBUG_MODE = True
-API_RATE_LIMIT_SLEEP = 14400  # 240 minutes
+API_RATE_LIMIT_SLEEP = 28800  # 480 minutes
 MIN_BTC_VOLUME = 0.0001
 ATR_MULTIPLIER = 1.0
 MIN_CANDLES = 15
@@ -101,7 +101,7 @@ def increment_rate_limit(pair):
     elif pair == HEDGE_PAIR:
         rate_limit_tracker['ETH'] += 1
 
-def get_ohlc_data(pair, api_client, retries=30, backoff_factor=8):
+def get_ohlc_data(pair, api_client, retries=50, backoff_factor=8):
     if not pair:
         log_trade(f"No trade: Invalid pair ({pair})")
         return None
@@ -178,7 +178,7 @@ def confirm_order(order, pair, side, volume, api_client):
         log_trade(f"Error confirming order on {pair}: {str(e)}")
         return False
 
-def execute_trade(pair, side, price, volume, api_client, retries=30):
+def execute_trade(pair, side, price, volume, api_client, retries=50):
     if not pair or volume < MIN_BTC_VOLUME:
         log_trade(f"No trade: Invalid pair ({pair}) or volume ({volume:.6f}) < {MIN_BTC_VOLUME}")
         return None
@@ -432,7 +432,7 @@ async def main():
                     trade_state['stage'] = 3
                     trade_state['btc_volume'] = total_btc
                     trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
-                    trade_state['hedge_start_time'] = time.time()
+                    trade_state['hedge_start_time': time.time()
                     fiat_balance -= btc_volume * btc_price
                     btc_balance += btc_volume
                     eth_balance -= hedge_volume
