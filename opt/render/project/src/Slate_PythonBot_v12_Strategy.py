@@ -55,11 +55,11 @@ MAX_EXPOSURE = 0.85
 BASE_HEDGE_RATIO = 0.5
 HEDGE_MAX_DURATION = 3600
 LOG_FILE = 'trade_log.txt'
-CYCLE_INTERVAL = 480  # Increased to reduce API calls
+CYCLE_INTERVAL = 600  # Increased to reduce API calls
 MIN_USD_BALANCE = 100
 HEALTH_CHECK_INTERVAL = 86400  # 24 hours
 DEBUG_MODE = True
-API_RATE_LIMIT_SLEEP = 480  # Increased for rate limits
+API_RATE_LIMIT_SLEEP = 600  # Increased for rate limits
 MIN_BTC_VOLUME = 0.0001
 ATR_MULTIPLIER = 1.0
 MIN_CANDLES = 15
@@ -201,7 +201,7 @@ async def main():
         log_trade(f"Error fetching balance: {str(e)}")
         raise ValueError("Failed to fetch balance")
 
-    btc_price = 109291.60  # From latest log
+    btc_price = 109296.00  # From latest log
     eth_price = 3500  # Approx ETH price
     portfolio_value = fiat_balance + (btc_balance * btc_price) + (eth_balance * eth_price)
     log_trade(f"Portfolio: ${portfolio_value:.2f} (Fiat: ${fiat_balance:.2f}, BTC: {btc_balance:.6f}, ETH: {eth_balance:.6f})")
@@ -216,7 +216,7 @@ async def main():
         'sell_stage': 0
     }
     last_ohlc_fetch = {'BTC': None, 'ETH': None, 'BTC_time': 0, 'ETH_time': 0}
-    cache_duration = 10800  # Cache OHLC for 180 minutes
+    cache_duration = 14400  # Cache OHLC for 240 minutes
     last_health_check = time.time()
 
     while True:
@@ -314,121 +314,4 @@ async def main():
             buy_value = buy_pct * portfolio_value
             if btc_exposure > MAX_EXPOSURE:
                 log_trade(f"No buy: BTC exposure ({btc_exposure:.2%}) > {MAX_EXPOSURE*100}%")
-                await asyncio.sleep(CYCLE_INTERVAL)
-                continue
-            if fiat_balance < buy_value:
-                btc_volume = max(fiat_balance / btc_price, MIN_BTC_VOLUME)
-                buy_value = btc_volume * btc_price
-                log_trade(f"Adjusting buy: Volume={btc_volume:.6f} (${buy_value:.2f})")
-            else:
-                btc_volume = max((buy_pct * portfolio_value) / btc_price, MIN_BTC_VOLUME)
-
-            # Buy logic
-            if trade_state['stage'] == 0 and rsi <= RSI_BUY_THRESHOLDS[0]:
-                hedge_volume = btc_volume * hedge_ratio
-                order = execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
-                if order:
-                    execute_trade(HEDGE_PAIR, 'sell', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                    trade_state = {
-                        'stage': 1,
-                        'entry_price': btc_price,
-                        'btc_volume': btc_volume,
-                        'avg_entry': btc_price,
-                        'hedge_volume': hedge_volume,
-                        'hedge_start_time': time.time(),
-                        'sell_stage': 0
-                    }
-                    fiat_balance -= btc_volume * btc_price
-                    btc_balance += btc_volume
-                    eth_balance -= hedge_volume
-                    log_trade(f"Balance: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}, ETH={eth_balance:.6f}")
-
-            elif trade_state['stage'] == 1 and (rsi <= RSI_BUY_THRESHOLDS[1] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[0])):
-                remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
-                buy_value = SECOND_BUY_PCT * remaining_value
-                if fiat_balance < buy_value:
-                    btc_volume = max(fiat_balance / btc_price, MIN_BTC_VOLUME)
-                    buy_value = btc_volume * btc_price
-                else:
-                    btc_volume = max((SECOND_BUY_PCT * remaining_value) / btc_price, MIN_BTC_VOLUME)
-                hedge_volume = btc_volume * hedge_ratio
-                order = execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
-                if order:
-                    execute_trade(HEDGE_PAIR, 'sell', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                    total_btc = trade_state['btc_volume'] + btc_volume
-                    trade_state['avg_entry'] = (trade_state['avg_entry'] * trade_state['btc_volume'] + btc_price * btc_volume) / total_btc
-                    trade_state['stage'] = 2
-                    trade_state['btc_volume'] = total_btc
-                    trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
-                    trade_state['hedge_start_time': time.time()
-                    fiat_balance -= btc_volume * btc_price
-                    btc_balance += btc_volume
-                    eth_balance -= hedge_volume
-                    log_trade(f"Balance: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}, ETH={eth_balance:.6f}")
-
-            elif trade_state['stage'] == 2 and (rsi <= RSI_BUY_THRESHOLDS[2] or btc_price < trade_state['entry_price'] * (1 - DIP_THRESHOLDS[1])):
-                remaining_value = portfolio_value - (trade_state['btc_volume'] * trade_state['avg_entry'])
-                buy_value = remaining_value
-                if fiat_balance < buy_value:
-                    btc_volume = max(fiat_balance / btc_price, MIN_BTC_VOLUME)
-                    buy_value = btc_volume * btc_price
-                else:
-                    btc_volume = max(remaining_value / btc_price, MIN_BTC_VOLUME)
-                hedge_volume = btc_volume * hedge_ratio
-                order = execute_trade(BTC_PAIR, 'buy', btc_price, btc_volume)
-                if order:
-                    execute_trade(HEDGE_PAIR, 'sell', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                    total_btc = trade_state['btc_volume'] + btc_volume
-                    trade_state['avg_entry'] = (trade_state['avg_entry'] * trade_state['btc_volume'] + btc_price * btc_volume) / total_btc
-                    trade_state['stage'] = 3
-                    trade_state['btc_volume'] = total_btc
-                    trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
-                    trade_state['hedge_start_time': time.time()
-                    fiat_balance -= btc_volume * btc_price
-                    btc_balance += btc_volume
-                    eth_balance -= hedge_volume
-                    log_trade(f"Balance: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}, ETH={eth_balance:.6f}")
-
-            # Sell logic (only for gains)
-            if trade_state['stage'] > 0:
-                profit_price = trade_state['avg_entry'] * (1 + MIN_PROFIT_PCT)
-                if btc_price < profit_price and btc_price >= trade_state['avg_entry'] * (1 - stop_loss_pct):
-                    log_trade(f"No sell: Price (${btc_price:.2f}) < min profit (${profit_price:.2f})")
-                    await asyncio.sleep(CYCLE_INTERVAL)
-                    continue
-                if btc_price < trade_state['avg_entry'] * (1 - stop_loss_pct):
-                    btc_volume = max(trade_state['btc_volume'], MIN_BTC_VOLUME)
-                    hedge_volume = trade_state['hedge_volume']
-                    order = execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
-                    if order:
-                        execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                        fiat_balance += btc_volume * btc_price
-                        btc_balance -= btc_volume
-                        eth_balance += hedge_volume
-                        log_trade(f"Stop-loss: Balance: Fiat=${fiat_balance:.2f}, BTC={btc_balance:.6f}, ETH={eth_balance:.6f}")
-                        trade_state = {
-                            'stage': 0,
-                            'entry_price': 0,
-                            'btc_volume': 0,
-                            'avg_entry': 0,
-                            'hedge_volume': 0,
-                            'hedge_start_time': 0,
-                            'sell_stage': 0
-                        }
-                elif current_time - trade_state['hedge_start_time'] > HEDGE_MAX_DURATION and trade_state['hedge_volume'] > 0:
-                    hedge_volume = trade_state['hedge_volume']
-                    order = execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                    if order:
-                        trade_state['hedge_volume'] = 0
-                        trade_state['hedge_start_time': 0
-                        eth_balance += hedge_volume
-                        log_trade(f"Hedge timeout: Closed ETH hedge, Balance: ETH={eth_balance:.6f}")
-                elif rsi > RSI_SELL_THRESHOLDS[0] and trade_state['sell_stage'] == 0 and macd < macd_signal and btc_price >= profit_price:
-                    btc_volume = max(FIRST_SELL_PCT * trade_state['btc_volume'], MIN_BTC_VOLUME)
-                    hedge_volume = btc_volume * hedge_ratio
-                    order = execute_trade(BTC_PAIR, 'sell', btc_price, btc_volume)
-                    if order:
-                        execute_trade(HEDGE_PAIR, 'buy', hedge_df['close'].iloc[-1] if hedge_df is not None else 0, hedge_volume)
-                        trade_state['btc_volume'] = trade_state['btc_volume'] - btc_volume
-                        trade_state['hedge_volume'] = trade_state['hedge_volume'] - hedge_volume
-                        trade
+                await asyncio
