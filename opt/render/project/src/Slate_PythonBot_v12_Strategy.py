@@ -13,7 +13,7 @@ from datetime import datetime
 import pytz
 import warnings
 
-# Suppress FutureWarnings
+# Suppress all FutureWarnings, including 'T' deprecation
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 # Initialize Kraken API
@@ -55,11 +55,11 @@ MAX_EXPOSURE = 0.85
 BASE_HEDGE_RATIO = 0.5
 HEDGE_MAX_DURATION = 3600
 LOG_FILE = 'trade_log.txt'
-CYCLE_INTERVAL = 180  # Increased to reduce API calls
+CYCLE_INTERVAL = 240  # Increased to reduce API calls
 MIN_USD_BALANCE = 100
 HEALTH_CHECK_INTERVAL = 86400  # 24 hours
 DEBUG_MODE = True
-API_RATE_LIMIT_SLEEP = 240  # Increased for rate limits
+API_RATE_LIMIT_SLEEP = 300  # Increased for rate limits
 MIN_BTC_VOLUME = 0.0001
 ATR_MULTIPLIER = 1.0
 MIN_CANDLES = 15
@@ -216,7 +216,7 @@ async def main():
         'sell_stage': 0
     }
     last_ohlc_fetch = {'BTC': None, 'ETH': None, 'BTC_time': 0, 'ETH_time': 0}
-    cache_duration = 1800  # Cache OHLC for 30 minutes
+    cache_duration = 2400  # Cache OHLC for 40 minutes
     last_health_check = time.time()
 
     while True:
@@ -360,7 +360,7 @@ async def main():
                     trade_state['stage'] = 2
                     trade_state['btc_volume'] = total_btc
                     trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
-                    trade_state['hedge_start_time': time.time()
+                    trade_state['hedge_start_time'] = time.time()
                     fiat_balance -= btc_volume * btc_price
                     btc_balance += btc_volume
                     eth_balance -= hedge_volume
@@ -383,7 +383,7 @@ async def main():
                     trade_state['stage'] = 3
                     trade_state['btc_volume'] = total_btc
                     trade_state['hedge_volume'] = trade_state['hedge_volume'] + hedge_volume
-                    trade_state['hedge_start_time': time.time()
+                    trade_state['hedge_start_time'] = time.time()
                     fiat_balance -= btc_volume * btc_price
                     btc_balance += btc_volume
                     eth_balance -= hedge_volume
