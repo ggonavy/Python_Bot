@@ -47,12 +47,14 @@ class SlateBot:
         self.rsi_periods = 14
         self.candles_to_fetch = 30
         self.last_candle_time = 0
-        self.buy_ladder = [47, 42, 37, 32]
-        self.sell_ladder = [73, 77, 81, 85]
-        self.base_trade_size = 0.001
+        self.buy_ladder = [50, 45, 40, 35]
+        self.sell_ladder = [70, 75, 80, 85]
+        self.base_trade_size = 0.005
         self.ladder_multipliers = [1, 1.5, 2, 3]
         self.max_retries = 3
         self.retry_delay = 5
+        self.stop_loss_percent = 0.05  # 5% stop-loss
+        self.open_orders = {}  # Track open orders for stop-loss
 
     def get_ohlc_data(self, kapi, pair):
         """Fetch OHLC data for the specified pair, limited to 30 candlesticks."""
@@ -106,8 +108,17 @@ class SlateBot:
             return None
         return rsi
 
-    def place_order(self, kapi, pair, side, volume):
-        """Place a market order on Kraken."""
+    def get_current_price(self, kapi, pair):
+        """Fetch current price for stop-loss checks."""
+        try:
+            ticker = kapi.get_ticker_information(pair)
+            return float(ticker['c'][0][0])  # Last trade price
+        except Exception as e:
+            logger.error(f"Error fetching price for {pair}: {e}")
+            return None
+
+    def place_order(self, kapi, pair, side, volume, buy_price=None):
+        """Place a market order on Kraken and track for stop-loss."""
         try:
             order = kapi.add_standard_order(
                 pair=pair,
@@ -116,10 +127,25 @@ class SlateBot:
                 volume=volume
             )
             logger.info(f"Placed {side} order for {volume} {pair}: {order}")
+            if side == 'buy' and buy_price:
+                self.open_orders[order['txid'][0]] = {'pair': pair, 'buy_price': buy_price, 'volume': volume}
             return order
         except Exception as e:
             logger.error(f"Error placing {side} order for {pair}: {e}")
             return None
+
+    def check_stop_loss(self, kapi, pair):
+        """Check open orders for stop-loss triggers."""
+        current_price = self.get_current_price(kapi, pair)
+        if current_price is None:
+            return
+        for order_id, order_info in list(self.open_orders.items()):
+            if order_info['pair'] == pair:
+                buy_price = order_info['buy_price']
+                if current_price <= buy_price * (1 - self.stop_loss_percent):
+                    logger.info(f"Stop-loss triggered for {pair} at {current_price}, selling {order_info['volume']}")
+                    self.place_order(kapi, pair, 'sell', order_info['volume'])
+                    del self.open_orders[order_id]
 
     def get_trade_action(self, rsi, pair):
         """Determine trade action based on RSI ladders."""
@@ -153,7 +179,11 @@ class SlateBot:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}")
             action, volume = self.get_trade_action(rsi_main, self.main_pair)
             if action and volume > 0:
-                self.place_order(self.kapi_main, self.main_pair, action, volume)
+                current_price = self.get_current_price(self.kapi_main, self.main_pair)
+                if current_price:
+                    self.place_order(self.kapi_main, self.main_pair, action, volume, buy_price=current_price if action == 'buy' else None)
+                    if action == 'buy':
+                        self.check_stop_loss(self.kapi_main, self.main_pair)
                 if self.kapi_hedge:
                     ohlc_hedge = self.get_ohlc_data(self.kapi_hedge, self.hedge_pair)
                     rsi_hedge = self.get_rsi(ohlc_hedge)
@@ -161,7 +191,11 @@ class SlateBot:
                         logger.info(f"RSI for {self.hedge_pair}: {rsi_hedge:.2f}")
                         hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, self.hedge_pair)
                         if hedge_action and hedge_volume > 0:
-                            self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume)
+                            hedge_price = self.get_current_price(self.kapi_hedge, self.hedge_pair)
+                            if hedge_price:
+                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
+                                if hedge_action == 'buy':
+                                    self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
                 logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}")
         else:
