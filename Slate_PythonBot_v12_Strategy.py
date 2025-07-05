@@ -65,9 +65,10 @@ class SlateBot:
             params = (('rsi_period', 14),)
             def __init__(self):
                 self.rsi = bt.indicators.RSI_SMA(self.data.close, period=self.params.rsi_period)
+                self.last_rsi = None
 
             def next(self):
-                pass  # No need to process each bar for static calculation
+                self.last_rsi = self.rsi[0]  # Store the latest RSI value
 
         # Create data feed
         data = bt.feeds.PandasData(
@@ -83,7 +84,8 @@ class SlateBot:
         cerebro.adddata(data)
         cerebro.run()
         # Access the latest RSI value from the strategy
-        rsi = cerebro.broker.getvalue('rsi')
+        strategy = cerebro.runstrats[0][0]
+        rsi = strategy.last_rsi
         if rsi is None:
             logger.error("RSI value not set in strategy")
             return None
