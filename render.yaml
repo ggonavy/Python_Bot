@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: slate-bot
     env: python
     plan: standard
@@ -20,5 +20,8 @@ services:
         sync: false
       - key: PIP_INDEX_URL
         value: https://pypi.org/simple
+      - key: PORT
+        value: 10000
     autoDeploy: false
     buildTimeout: 600
+    healthCheckPath: /health
