@@ -45,26 +45,33 @@ class SlateBot:
         self.hedge_pair = 'ETHUSD'
         self.interval = 15
         self.rsi_periods = 14
-        self.candles_to_fetch = 20
+        self.candles_to_fetch = 30
         self.last_candle_time = 0
         self.buy_ladder = [47, 42, 37, 32]
         self.sell_ladder = [73, 77, 81, 85]
         self.base_trade_size = 0.001
         self.ladder_multipliers = [1, 1.5, 2, 3]
+        self.max_retries = 3
+        self.retry_delay = 5
 
     def get_ohlc_data(self, kapi, pair):
-        """Fetch OHLC data for the specified pair, limited to 20 candlesticks."""
-        try:
-            since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 1.5)
-            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, since=since, ascending=True)
-            ohlc = ohlc.tail(self.candles_to_fetch)
-            logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
-            if len(ohlc) < self.candles_to_fetch:
-                logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
-            return ohlc
-        except Exception as e:
-            logger.error(f"Error fetching OHLC for {pair}: {e}")
-            return None
+        """Fetch OHLC data for the specified pair, limited to 30 candlesticks."""
+        for attempt in range(self.max_retries):
+            try:
+                since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 1.5)
+                ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, since=since, ascending=True)
+                ohlc = ohlc.tail(self.candles_to_fetch)
+                logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
+                if len(ohlc) < self.candles_to_fetch:
+                    logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
+                return ohlc
+            except Exception as e:
+                logger.error(f"Error fetching OHLC for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                else:
+                    return None
+        return None
 
     def get_rsi(self, ohlc_data):
         """Calculate RSI from OHLC data using backtrader."""
@@ -188,7 +195,6 @@ if __name__ == "__main__":
         logger.error("Missing main Kraken API credentials")
         exit(1)
     
-    # Start Flask in a separate thread
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     
