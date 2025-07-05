@@ -6,7 +6,7 @@ import krakenex
          exit(1)
      import pandas as pd
      import numpy as np
-     from ta.momentum import RSIIndicator
+     import pandas_ta as ta
      import time
      import os
      import logging
@@ -56,12 +56,12 @@ import krakenex
                  return None
 
          def get_rsi(self, ohlc_data):
-             """Calculate RSI from OHLC data."""
+             """Calculate RSI from OHLC data using pandas-ta."""
              if ohlc_data is None or len(ohlc_data) < self.rsi_periods:
                  logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
                  return None
              close = ohlc_data['close']
-             rsi = RSIIndicator(close, window=self.rsi_periods).rsi()
+             rsi = ta.rsi(close, length=self.rsi_periods)
              return rsi.iloc[-1]
 
          def place_order(self, kapi, pair, side, volume):
