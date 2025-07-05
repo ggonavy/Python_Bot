@@ -10,6 +10,8 @@ import backtrader as bt
 import time
 import os
 import logging
+from flask import Flask
+import threading
 
 # Setup logging for Render
 logging.basicConfig(
@@ -21,6 +23,13 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Flask app for health check
+app = Flask(__name__)
+
+@app.route('/health')
+def health():
+    return 'OK', 200
 
 class SlateBot:
     def __init__(self, main_key, main_secret, hedge_key=None, hedge_secret=None):
@@ -46,10 +55,9 @@ class SlateBot:
     def get_ohlc_data(self, kapi, pair):
         """Fetch OHLC data for the specified pair, limited to 20 candlesticks."""
         try:
-            # Fetch slightly more candles to ensure enough data, then trim
-            since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 2)  # Double buffer
+            since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 1.5)
             ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, since=since, ascending=True)
-            ohlc = ohlc.tail(self.candles_to_fetch)  # Strictly limit to 20
+            ohlc = ohlc.tail(self.candles_to_fetch)
             logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
             if len(ohlc) < self.candles_to_fetch:
                 logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
@@ -63,7 +71,6 @@ class SlateBot:
         if ohlc_data is None or len(ohlc_data) < self.rsi_periods:
             logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
             return None
-        # Create a custom backtrader strategy to access RSI
         class RSIStrategy(bt.Strategy):
             params = (('rsi_period', 14),)
             def __init__(self):
@@ -71,9 +78,8 @@ class SlateBot:
                 self.last_rsi = None
 
             def next(self):
-                self.last_rsi = self.rsi[0]  # Store the latest RSI value
+                self.last_rsi = self.rsi[0]
 
-        # Create data feed
         data = bt.feeds.PandasData(
             dataname=ohlc_data,
             open='open',
@@ -86,7 +92,6 @@ class SlateBot:
         cerebro.addstrategy(RSIStrategy, rsi_period=self.rsi_periods)
         cerebro.adddata(data)
         cerebro.run()
-        # Access the latest RSI value from the strategy
         strategy = cerebro.runstrats[0][0]
         rsi = strategy.last_rsi
         if rsi is None:
@@ -169,6 +174,10 @@ class SlateBot:
                 logger.error(f"Error in main loop: {e}")
                 time.sleep(60)
 
+def start_flask():
+    """Run Flask server in a separate thread."""
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
+
 if __name__ == "__main__":
     main_key = os.getenv("KRAKEN_API_KEY")
     main_secret = os.getenv("KRAKEN_API_SECRET")
@@ -178,6 +187,10 @@ if __name__ == "__main__":
     if not main_key or not main_secret:
         logger.error("Missing main Kraken API credentials")
         exit(1)
+    
+    # Start Flask in a separate thread
+    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread.start()
     
     bot = SlateBot(main_key, main_secret, hedge_key, hedge_secret)
     bot.run()
