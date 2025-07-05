@@ -4,3 +4,4 @@ git+https://github.com/dominiktraxl/pykrakenapi.git@3817add24389f1e222498b0a5c50
 backtrader==1.9.78.123
 git+https://github.com/veox/python3-krakenex.git@v2.2.2
 python-dotenv==1.0.1
+flask==3.0.3
