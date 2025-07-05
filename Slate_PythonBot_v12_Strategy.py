@@ -6,7 +6,7 @@ import krakenex
          exit(1)
      import pandas as pd
      import numpy as np
-     import pandas_ta as ta
+     import backtrader as bt
      import time
      import os
      import logging
@@ -56,13 +56,18 @@ import krakenex
                  return None
 
          def get_rsi(self, ohlc_data):
-             """Calculate RSI from OHLC data using pandas-ta."""
+             """Calculate RSI from OHLC data using backtrader."""
              if ohlc_data is None or len(ohlc_data) < self.rsi_periods:
                  logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
                  return None
-             close = ohlc_data['close']
-             rsi = ta.rsi(close, length=self.rsi_periods)
-             return rsi.iloc[-1]
+             # Create a backtrader data feed
+             data = bt.feeds.PandasData(dataname=ohlc_data, open='open', high='high', low='low', close='close', volume='volume')
+             cerebro = bt.Cerebro()
+             cerebro.adddata(data)
+             cerebro.addindicator(bt.indicators.RSI, period=self.rsi_periods)
+             cerebro.run()
+             rsi = cerebro.datas[0].indicators[0].get(size=1)[0]
+             return rsi
 
          def place_order(self, kapi, pair, side, volume):
              """Place a market order on Kraken."""
