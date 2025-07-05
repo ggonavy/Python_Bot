@@ -220,10 +220,20 @@ def start_flask():
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
 
 if __name__ == "__main__":
+    # Load main account credentials from environment variables
     main_key = os.getenv("KRAKEN_API_KEY")
     main_secret = os.getenv("KRAKEN_API_SECRET")
-    hedge_key = os.getenv("KRAKEN_API_KEY_HEDGE")
-    hedge_secret = os.getenv("KRAKEN_API_SECRET_HEDGE")
+    
+    # Load hedge account credentials from secret files
+    try:
+        with open('/etc/secrets/KRAKEN_API_KEY_HEDGE', 'r') as f:
+            hedge_key = f.read().strip()
+        with open('/etc/secrets/KRAKEN_API_SECRET_HEDGE', 'r') as f:
+            hedge_secret = f.read().strip()
+    except Exception as e:
+        logger.error(f"Error reading hedge secret files: {e}")
+        hedge_key = None
+        hedge_secret = None
     
     if not main_key or not main_secret:
         logger.error("Missing main Kraken API credentials")
