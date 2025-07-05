@@ -1,4 +1,4 @@
-pandas==1.5.3
+pandas==1.5.2
 numpy==1.22.4
 pykrakenapi==0.1.8
 ta==0.7.0
