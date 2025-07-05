@@ -1,5 +1,9 @@
 import krakenex
-from pykrakenapi import KrakenAPI
+try:
+    from pykrakenapi import KrakenAPI
+except ImportError:
+    logger.error("pykrakenapi import failed. Ensure it's installed correctly.")
+    exit(1)
 import pandas as pd
 import numpy as np
 from ta.momentum import RSIIndicator
@@ -30,15 +34,14 @@ class SlateBot:
             self.kapi_hedge = KrakenAPI(self.k_hedge)
         self.main_pair = 'XBTUSD'
         self.hedge_pair = 'ETHUSD'
-        self.interval = 15  # 15-minute candlesticks
+        self.interval = 15
         self.rsi_periods = 14
         self.candles_to_fetch = 20
         self.last_candle_time = 0
-        # RSI buy/sell ladders
-        self.buy_ladder = [47, 42, 37, 32]  # Buy at or below these RSI levels
-        self.sell_ladder = [73, 77, 81, 85]  # Sell at or above these RSI levels
-        self.base_trade_size = 0.001  # Base size (e.g., 0.001 BTC or ETH)
-        self.ladder_multipliers = [1, 1.5, 2, 3]  # Increase size for deeper levels
+        self.buy_ladder = [47, 42, 37, 32]
+        self.sell_ladder = [73, 77, 81, 85]
+        self.base_trade_size = 0.001
+        self.ladder_multipliers = [1, 1.5, 2, 3]
 
     def get_ohlc_data(self, kapi, pair):
         """Fetch OHLC data for the specified pair."""
@@ -78,7 +81,7 @@ class SlateBot:
 
     def get_trade_action(self, rsi, pair):
         """Determine trade action based on RSI ladders."""
-        if pair == self.main_pair:  # BTC/USD on main account
+        if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level:
                     volume = self.base_trade_size * self.ladder_multipliers[i]
@@ -87,35 +90,33 @@ class SlateBot:
                 if rsi >= rsi_level:
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     return 'sell', volume
-        elif pair == self.hedge_pair:  # ETH/USD on hedge account
+        elif pair == self.hedge_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level:
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    return 'sell', volume  # Inverse for hedge
+                    return 'sell', volume
             for i, rsi_level in enumerate(self.sell_ladder):
                 if rsi >= rsi_level:
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    return 'buy', volume  # Inverse for hedge
+                    return 'buy', volume
         return None, 0
 
     def execute_trades(self):
         """Execute trades for main and hedge accounts based on RSI."""
-        # Main account: BTC/USD
         ohlc_main = self.get_ohlc_data(self.kapi_main, self.main_pair)
         rsi_main = self.get_rsi(ohlc_main)
         if rsi_main:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}")
             action, volume = self.get_trade_action(rsi_main, self.main_pair)
-            if action:
+            if action and volume > 0:
                 self.place_order(self.kapi_main, self.main_pair, action, volume)
-                # Trigger hedge trade
                 if self.kapi_hedge:
                     ohlc_hedge = self.get_ohlc_data(self.kapi_hedge, self.hedge_pair)
                     rsi_hedge = self.get_rsi(ohlc_hedge)
                     if rsi_hedge:
                         logger.info(f"RSI for {self.hedge_pair}: {rsi_hedge:.2f}")
                         hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, self.hedge_pair)
-                        if hedge_action:
+                        if hedge_action and hedge_volume > 0:
                             self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume)
             else:
                 logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}")
