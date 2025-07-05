@@ -60,22 +60,27 @@ class SlateBot:
         if ohlc_data is None or len(ohlc_data) < self.rsi_periods:
             logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
             return None
-        # Create a backtrader data feed
-        class PandasData(bt.feeds.PandasData):
-            params = (
-                ('datetime', None),
-                ('open', 'open'),
-                ('high', 'high'),
-                ('low', 'low'),
-                ('close', 'close'),
-                ('volume', 'volume'),
-            )
-        data = PandasData(dataname=ohlc_data)
+        # Create a custom backtrader strategy to access RSI
+        class RSIStrategy(bt.Strategy):
+            params = (('rsi_period', 14),)
+            def __init__(self):
+                self.rsi = bt.indicators.RSI(self.data.close, period=self.params.rsi_period)
+            def next(self):
+                pass
+        # Create data feed
+        data = bt.feeds.PandasData(
+            dataname=ohlc_data,
+            open='open',
+            high='high',
+            low='low',
+            close='close',
+            volume='volume'
+        )
         cerebro = bt.Cerebro()
+        cerebro.addstrategy(RSIStrategy, rsi_period=self.rsi_periods)
         cerebro.adddata(data)
-        cerebro.addindicator(bt.indicators.RSI, period=self.rsi_periods)
         cerebro.run()
-        rsi = cerebro.datas[0].indicators[0].lines.rsi[-1]
+        rsi = cerebro.strategies[0].rsi[0]
         return rsi
 
     def place_order(self, kapi, pair, side, volume):
@@ -119,7 +124,7 @@ class SlateBot:
         """Execute trades for main and hedge accounts based on RSI."""
         ohlc_main = self.get_ohlc_data(self.kapi_main, self.main_pair)
         rsi_main = self.get_rsi(ohlc_main)
-        if rsi_main:
+        if rsi_main is not None:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}")
             action, volume = self.get_trade_action(rsi_main, self.main_pair)
             if action and volume > 0:
@@ -127,13 +132,15 @@ class SlateBot:
                 if self.kapi_hedge:
                     ohlc_hedge = self.get_ohlc_data(self.kapi_hedge, self.hedge_pair)
                     rsi_hedge = self.get_rsi(ohlc_hedge)
-                    if rsi_hedge:
+                    if rsi_hedge is not None:
                         logger.info(f"RSI for {self.hedge_pair}: {rsi_hedge:.2f}")
                         hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, self.hedge_pair)
                         if hedge_action and hedge_volume > 0:
                             self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume)
             else:
                 logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}")
+        else:
+            logger.info(f"No RSI calculated for {self.main_pair}")
 
     def run(self):
         """Main bot loop."""
