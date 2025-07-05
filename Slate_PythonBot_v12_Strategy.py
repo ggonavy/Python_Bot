@@ -110,7 +110,7 @@ def get_ohlc_data(pair, api_client, retries=1000, backoff_factor=8):
         return None
     for attempt in range(retries):
         try:
-            ohlc, _ = api_client.get_ohlc_data(pair, interval=INTERVAL, ascending=True, count=300)
+            ohlc = api_client.get_ohlc_data(pair, interval=INTERVAL, ascending=True)[0]
             if len(ohlc) < MIN_CANDLES:
                 log_trade(f"Error: Only {len(ohlc)} candles for {pair}, need {MIN_CANDLES}")
                 time.sleep(API_RATE_LIMIT_SLEEP * (backoff_factor ** attempt))
