@@ -1,4 +1,4 @@
-pandas-ta==0.3.14b
+pandas_ta==0.3.14b0
 numpy==1.26.4
 git+https://github.com/dominiktraxl/pykrakenapi.git@3817add24389f1e222498b0a5c508cc88ac9971a
 pandas-ta==0.3.14b0
