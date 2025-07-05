@@ -18,4 +18,7 @@ services:
         sync: false
       - key: KRAKEN_API_SECRET_HEDGE
         sync: false
+      - key: PIP_INDEX_URL
+        value: https://pypi.org/simple
     autoDeploy: false
+    buildTimeout: 600
