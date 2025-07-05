@@ -1,6 +1,6 @@
 pandas==2.1.4
 numpy==1.26.4
-git+https://github.com/dominiktraxl/pykrakenapi.git@70a1a06f0b6dede6a5e8f6b3b72907d43a3783dc
+git+https://github.com/dominiktraxl/pykrakenapi.git@ac35d2d12aead6a8b47f631439f3a4c0d56f0b1d
 ta==0.11.0
 krakenex==2.1.0
 python-dotenv==1.0.1
