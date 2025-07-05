@@ -2,5 +2,5 @@ pandas==2.1.4
 numpy==1.26.4
 git+https://github.com/dominiktraxl/pykrakenapi.git@3817add24389f1e222498b0a5c508cc88ac9971a
 backtrader==1.9.78.123
-krakenex==2.2.2
+git+https://github.com/veox/python3-krakenex.git@v2.2.2
 python-dotenv==1.0.1
