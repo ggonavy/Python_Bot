@@ -1,5 +1,5 @@
 pandas==2.1.4
 numpy==1.26.4
-pykrakenapi==0.1.8
+pykrakenapi==0.3.2
 ta==0.7.0
 krakenex==2.1.0
