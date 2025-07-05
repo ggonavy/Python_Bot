@@ -44,13 +44,16 @@ class SlateBot:
         self.ladder_multipliers = [1, 1.5, 2, 3]
 
     def get_ohlc_data(self, kapi, pair):
-        """Fetch OHLC data for the specified pair."""
+        """Fetch OHLC data for the specified pair, limited to 20 candlesticks."""
         try:
-            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, ascending=True)
+            # Fetch slightly more candles to ensure enough data, then trim
+            since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 2)  # Double buffer
+            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, since=since, ascending=True)
+            ohlc = ohlc.tail(self.candles_to_fetch)  # Strictly limit to 20
             logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
             if len(ohlc) < self.candles_to_fetch:
                 logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
-            return ohlc.tail(self.candles_to_fetch)
+            return ohlc
         except Exception as e:
             logger.error(f"Error fetching OHLC for {pair}: {e}")
             return None
