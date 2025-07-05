@@ -1,5 +1,6 @@
 pandas==2.1.4
 numpy==1.26.4
-pykrakenapi==0.1.9
-ta==0.7.0
+pykrakenapi==0.1.8  # Stable for Python 3.12
+ta==0.11.0  # Latest, Python 3.12 compatible
 krakenex==2.1.0
+python-dotenv==1.0.1  # For env variables
