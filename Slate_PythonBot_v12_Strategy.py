@@ -61,12 +61,21 @@ class SlateBot:
             logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
             return None
         # Create a backtrader data feed
-        data = bt.feeds.PandasData(dataname=ohlc_data, open='open', high='high', low='low', close='close', volume='volume')
+        class PandasData(bt.feeds.PandasData):
+            params = (
+                ('datetime', None),
+                ('open', 'open'),
+                ('high', 'high'),
+                ('low', 'low'),
+                ('close', 'close'),
+                ('volume', 'volume'),
+            )
+        data = PandasData(dataname=ohlc_data)
         cerebro = bt.Cerebro()
         cerebro.adddata(data)
         cerebro.addindicator(bt.indicators.RSI, period=self.rsi_periods)
         cerebro.run()
-        rsi = cerebro.datas[0].indicators[0].get(size=1)[0]
+        rsi = cerebro.datas[0].indicators[0].lines.rsi[-1]
         return rsi
 
     def place_order(self, kapi, pair, side, volume):
