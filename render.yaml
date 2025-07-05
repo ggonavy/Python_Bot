@@ -5,7 +5,7 @@ services:
     plan: standard
     branch: main
     repo: https://github.com/ggonavy/slate-bot
-    buildCommand: python -m pip install --no-cache-dir --upgrade pip && python -m pip install --no-cache-dir setuptools==67.8.0 && python -m pip install --no-cache-dir --only-binary :all: -r requirements.txt
+    buildCommand: python -m pip install --no-cache-dir --upgrade pip && python -m pip install --no-cache-dir setuptools==65.6.3 && python -m pip install --no-cache-dir --only-binary :all: -r requirements.txt
     startCommand: python Slate_PythonBot_v12_Strategy.py
     rootDir: src
     region: us-east
