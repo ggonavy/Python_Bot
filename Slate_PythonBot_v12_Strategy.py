@@ -64,9 +64,7 @@ class SlateBot:
         class RSIStrategy(bt.Strategy):
             params = (('rsi_period', 14),)
             def __init__(self):
-                self.rsi = bt.indicators.RSI(self.data.close, period=self.params.rsi_period)
-            def next(self):
-                self.lines.rsi[0] = self.rsi[0]  # Store latest RSI value
+                self.rsi = bt.indicators.RSI_SMA(self.data.close, period=self.params.rsi_period)
 
         # Create data feed
         data = bt.feeds.PandasData(
@@ -82,7 +80,7 @@ class SlateBot:
         cerebro.adddata(data)
         cerebro.run()
         # Access the latest RSI value from the strategy
-        rsi = cerebro.runstrats[0][0].lines.rsi[0]
+        rsi = cerebro._strategies[0][0].rsi[0]
         return rsi
 
     def place_order(self, kapi, pair, side, volume):
