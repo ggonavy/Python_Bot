@@ -46,7 +46,7 @@ class SlateBot:
     def get_ohlc_data(self, kapi, pair):
         """Fetch OHLC data for the specified pair."""
         try:
-            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, ascending=True)
+            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, ascending=True, count=self.candles_to_fetch)
             logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
             if len(ohlc) < self.candles_to_fetch:
                 logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
@@ -66,6 +66,9 @@ class SlateBot:
             def __init__(self):
                 self.rsi = bt.indicators.RSI_SMA(self.data.close, period=self.params.rsi_period)
 
+            def next(self):
+                pass  # No need to process each bar for static calculation
+
         # Create data feed
         data = bt.feeds.PandasData(
             dataname=ohlc_data,
@@ -80,7 +83,7 @@ class SlateBot:
         cerebro.adddata(data)
         cerebro.run()
         # Access the latest RSI value from the strategy
-        rsi = cerebro._strategies[0][0].rsi[0]
+        rsi = cerebro.strategylist[0].rsi[0]
         return rsi
 
     def place_order(self, kapi, pair, side, volume):
