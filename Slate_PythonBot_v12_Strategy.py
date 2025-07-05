@@ -46,7 +46,7 @@ class SlateBot:
     def get_ohlc_data(self, kapi, pair):
         """Fetch OHLC data for the specified pair."""
         try:
-            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, ascending=True, count=self.candles_to_fetch)
+            ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, ascending=True)
             logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
             if len(ohlc) < self.candles_to_fetch:
                 logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
@@ -83,7 +83,10 @@ class SlateBot:
         cerebro.adddata(data)
         cerebro.run()
         # Access the latest RSI value from the strategy
-        rsi = cerebro.strategylist[0].rsi[0]
+        rsi = cerebro.broker.getvalue('rsi')
+        if rsi is None:
+            logger.error("RSI value not set in strategy")
+            return None
         return rsi
 
     def place_order(self, kapi, pair, side, volume):
@@ -103,6 +106,8 @@ class SlateBot:
 
     def get_trade_action(self, rsi, pair):
         """Determine trade action based on RSI ladders."""
+        if rsi is None:
+            return None, 0
         if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level:
