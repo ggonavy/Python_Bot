@@ -12,6 +12,7 @@ import os
 import logging
 from flask import Flask
 import threading
+from collections import deque
 
 # Setup logging for Render
 logging.basicConfig(
@@ -57,6 +58,7 @@ class SlateBot:
         self.stop_loss_percent = 0.05  # 5% stop-loss
         self.ema_tolerance = 0.01  # Allow price within 1% of EMA
         self.open_orders = {}  # Track open orders for stop-loss
+        self.missed_signals = deque(maxlen=10)  # Queue for missed signals (max 10)
 
     def get_ohlc_data(self, kapi, pair):
         """Fetch OHLC data for the specified pair, limited to 50 candlesticks."""
@@ -115,15 +117,22 @@ class SlateBot:
         return rsi, ema
 
     def get_account_balance(self, kapi):
-        """Fetch available fiat balance (USD) from Kraken."""
+        """Fetch available fiat balance (USD) or asset balance from Kraken."""
         try:
             balance = kapi.get_account_balance()
-            fiat_balance = float(balance.get('ZUSD', 0))
-            logger.info(f"Available fiat balance: ${fiat_balance:.2f}")
-            return fiat_balance
+            if 'ZUSD' in balance:
+                fiat_balance = float(balance.get('ZUSD', 0))
+                logger.info(f"Available fiat balance: ${fiat_balance:.2f}")
+                return fiat_balance, None
+            elif 'XXBT' in balance or 'XETH' in balance:
+                asset_balance = float(balance.get('XXBT', 0) if self.main_pair == 'XBTUSD' else balance.get('XETH', 0))
+                logger.info(f"Available asset balance: {asset_balance:.6f} {'BTC' if self.main_pair == 'XBTUSD' else 'ETH'}")
+                return None, asset_balance
+            logger.warning("No fiat or asset balance found")
+            return 0, 0
         except Exception as e:
             logger.error(f"Error fetching balance: {e}")
-            return 0
+            return 0, 0
 
     def get_current_price(self, kapi, pair):
         """Fetch current price for stop-loss and trade checks."""
@@ -170,54 +179,105 @@ class SlateBot:
                     self.place_order(kapi, pair, 'sell', order_info['volume'])
                     del self.open_orders[order_id]
 
-    def get_trade_action(self, rsi, ema, current_price, pair):
+    def get_trade_action(self, rsi, ema, current_price, pair, fiat_balance=0, asset_balance=0):
         """Determine trade action based on RSI and EMA."""
         if rsi is None or ema is None or current_price is None:
             logger.info(f"No trade for {pair}: RSI {rsi}, EMA {ema}, Current Price {current_price}")
+            self.missed_signals.append((pair, rsi, ema, current_price, time.time()))  # Queue missed signal
             return None, 0
         logger.info(f"Checking trade for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):  # Buy when RSI low and price near EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
-                    return 'buy', volume
+                    if fiat_balance >= volume * current_price:  # Check sufficient fiat
+                        logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}, Volume {volume:.6f}")
+                        return 'buy', volume
+                    else:
+                        logger.warning(f"Insufficient fiat balance (${fiat_balance:.2f}) for buy order of {volume} {pair} at {current_price:.2f}")
+                        self.missed_signals.append((pair, rsi, ema, current_price, time.time()))
+                        return None, 0
             for i, rsi_level in enumerate(self.sell_ladder):
                 if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):  # Sell when RSI high and price above EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
-                    return 'sell', volume
+                    if asset_balance >= volume:  # Check sufficient asset
+                        logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}, Volume {volume:.6f}")
+                        return 'sell', volume
+                    else:
+                        logger.warning(f"Insufficient asset balance ({asset_balance:.6f}) for sell order of {volume} {pair}")
+                        self.missed_signals.append((pair, rsi, ema, current_price, time.time()))
+                        return None, 0
         elif pair == self.hedge_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):  # Sell ETH when RSI low
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
+                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}, Volume {volume:.6f}")
                     return 'sell', volume
             for i, rsi_level in enumerate(self.sell_ladder):
                 if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):  # Buy ETH when RSI high
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
+                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}, Volume {volume:.6f}")
                     return 'buy', volume
         logger.info(f"No trade signal for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         return None, 0
 
+    def retry_missed_signals(self):
+        """Retry missed trade signals from the queue."""
+        current_time = time.time()
+        retry_signals = deque()
+        while self.missed_signals:
+            pair, rsi, ema, current_price, signal_time = self.missed_signals.popleft()
+            if current_time - signal_time > 3600:  # Skip signals older than 1 hour
+                continue
+            for i, rsi_level in enumerate(self.buy_ladder if pair == self.main_pair else self.sell_ladder):
+                if pair == self.main_pair and rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):
+                    volume = self.base_trade_size * self.ladder_multipliers[i]
+                    fiat_balance, _ = self.get_account_balance(self.kapi_main)
+                    if fiat_balance >= volume * current_price:
+                        logger.info(f"Retrying missed buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
+                        return 'buy', volume, pair
+                elif pair == self.main_pair and rsi >= self.sell_ladder[i] and current_price >= ema * (1 - self.ema_tolerance):
+                    volume = self.base_trade_size * self.ladder_multipliers[i]
+                    _, asset_balance = self.get_account_balance(self.kapi_main)
+                    if asset_balance >= volume:
+                        logger.info(f"Retrying missed sell signal for {pair}: RSI {rsi:.2f} >= {self.sell_ladder[i]}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
+                        return 'sell', volume, pair
+                elif pair == self.hedge_pair and rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):
+                    volume = self.base_trade_size * self.ladder_multipliers[i]
+                    logger.info(f"Retrying missed sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
+                    return 'sell', volume, pair
+                elif pair == self.hedge_pair and rsi >= self.sell_ladder[i] and current_price >= ema * (1 - self.ema_tolerance):
+                    volume = self.base_trade_size * self.ladder_multipliers[i]
+                    logger.info(f"Retrying missed buy signal for {pair}: RSI {rsi:.2f} >= {self.sell_ladder[i]}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
+                    return 'buy', volume, pair
+            retry_signals.append((pair, rsi, ema, current_price, signal_time))  # Re-queue if still valid
+        self.missed_signals = retry_signals
+        return None, 0, None
+
     def execute_trades(self):
         """Execute trades for main and hedge accounts based on RSI and EMA."""
+        # Retry missed signals
+        action, volume, pair = self.retry_missed_signals()
+        if action and volume > 0:
+            kapi = self.kapi_main if pair == self.main_pair else self.kapi_hedge
+            self.place_order(kapi, pair, action, volume, buy_price=self.get_current_price(kapi, pair) if action == 'buy' else None)
+            if action == 'buy':
+                self.check_stop_loss(kapi, pair)
+            return
+
+        # Regular trade execution
         ohlc_main = self.get_ohlc_data(self.kapi_main, self.main_pair)
         rsi_main, ema_main = self.get_rsi_and_ema(ohlc_main)
         if rsi_main is not None and ema_main is not None:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}, EMA: {ema_main:.2f}")
-            fiat_balance = self.get_account_balance(self.kapi_main)
+            fiat_balance, asset_balance = self.get_account_balance(self.kapi_main)
             current_price = self.get_current_price(self.kapi_main, self.main_pair)
             if current_price:
-                action, volume = self.get_trade_action(rsi_main, ema_main, current_price, self.main_pair)
+                action, volume = self.get_trade_action(rsi_main, ema_main, current_price, self.main_pair, fiat_balance, asset_balance)
                 if action and volume > 0:
-                    if fiat_balance >= volume * current_price or action != 'buy':  # Ensure sufficient funds for buy
-                        self.place_order(self.kapi_main, self.main_pair, action, volume, buy_price=current_price if action == 'buy' else None)
-                        if action == 'buy':
-                            self.check_stop_loss(self.kapi_main, self.main_pair)
-                    else:
-                        logger.warning(f"Insufficient fiat balance (${fiat_balance:.2f}) for {action} order of {volume} {self.main_pair} at {current_price:.2f}")
+                    self.place_order(self.kapi_main, self.main_pair, action, volume, buy_price=current_price if action == 'buy' else None)
+                    if action == 'buy':
+                        self.check_stop_loss(self.kapi_main, self.main_pair)
                 if self.kapi_hedge:
                     ohlc_hedge = self.get_ohlc_data(self.kapi_hedge, self.hedge_pair)
                     rsi_hedge, ema_hedge = self.get_rsi_and_ema(ohlc_hedge)
