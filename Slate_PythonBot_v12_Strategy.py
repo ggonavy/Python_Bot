@@ -123,7 +123,7 @@ class SlateBot:
                 # Try get_account_balance first
                 balance = kapi.get_account_balance()
                 logger.info(f"Raw balance response for {pair}: {balance}")
-                fiat_balance = float(balance.get('ZUSD', balance.get('USD', 0)))
+                fiat_balance = float(balance.get('ZUSD', balance.get('USD', balance.get('USDT', 0))))
                 asset_key = 'XXBT' if pair == 'XBTUSD' else 'XETH'
                 asset_balance = float(balance.get(asset_key, 0))
                 if fiat_balance > 0 or asset_balance > 0:
@@ -149,7 +149,7 @@ class SlateBot:
                 if attempt < self.max_retries - 1:
                     time.sleep(self.retry_delay)
                 else:
-                    logger.error("Failed to fetch balance after retries")
+                    logger.error("Failed to fetch balance after retries. Check Kraken API key permissions.")
                     return 0, 0
         return 0, 0
 
@@ -316,7 +316,7 @@ class SlateBot:
                         if hedge_price:
                             hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, ema_hedge, hedge_price, self.hedge_pair, hedge_fiat_balance, hedge_asset_balance)
                             if hedge_action and hedge_volume > 0:
-                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
+                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if action == 'buy' else None)
                                 if hedge_action == 'buy':
                                     self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
