@@ -45,7 +45,8 @@ class SlateBot:
         self.hedge_pair = 'ETHUSD'
         self.interval = 15
         self.rsi_periods = 14
-        self.candles_to_fetch = 30
+        self.ema_periods = 20
+        self.candles_to_fetch = 50
         self.last_candle_time = 0
         self.buy_ladder = [50, 45, 40, 35]
         self.sell_ladder = [70, 75, 80, 85]
@@ -57,7 +58,7 @@ class SlateBot:
         self.open_orders = {}  # Track open orders for stop-loss
 
     def get_ohlc_data(self, kapi, pair):
-        """Fetch OHLC data for the specified pair, limited to 30 candlesticks."""
+        """Fetch OHLC data for the specified pair, limited to 50 candlesticks."""
         for attempt in range(self.max_retries):
             try:
                 since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 1.5)
@@ -75,19 +76,22 @@ class SlateBot:
                     return None
         return None
 
-    def get_rsi(self, ohlc_data):
-        """Calculate RSI from OHLC data using backtrader."""
-        if ohlc_data is None or len(ohlc_data) < self.rsi_periods:
+    def get_rsi_and_ema(self, ohlc_data):
+        """Calculate RSI and EMA from OHLC data using backtrader."""
+        if ohlc_data is None or len(ohlc_data) < max(self.rsi_periods, self.ema_periods):
             logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
-            return None
+            return None, None
         class RSIStrategy(bt.Strategy):
-            params = (('rsi_period', 14),)
+            params = (('rsi_period', 14), ('ema_period', 20))
             def __init__(self):
                 self.rsi = bt.indicators.RSI_SMA(self.data.close, period=self.params.rsi_period)
+                self.ema = bt.indicators.EMA(self.data.close, period=self.params.ema_period)
                 self.last_rsi = None
+                self.last_ema = None
 
             def next(self):
                 self.last_rsi = self.rsi[0]
+                self.last_ema = self.ema[0]
 
         data = bt.feeds.PandasData(
             dataname=ohlc_data,
@@ -98,21 +102,22 @@ class SlateBot:
             volume='volume'
         )
         cerebro = bt.Cerebro()
-        cerebro.addstrategy(RSIStrategy, rsi_period=self.rsi_periods)
+        cerebro.addstrategy(RSIStrategy, rsi_period=self.rsi_periods, ema_period=self.ema_periods)
         cerebro.adddata(data)
         cerebro.run()
         strategy = cerebro.runstrats[0][0]
         rsi = strategy.last_rsi
-        if rsi is None:
-            logger.error("RSI value not set in strategy")
-            return None
-        return rsi
+        ema = strategy.last_ema
+        if rsi is None or ema is None:
+            logger.error("RSI or EMA value not set in strategy")
+            return None, None
+        return rsi, ema
 
     def get_current_price(self, kapi, pair):
         """Fetch current price for stop-loss checks."""
         try:
             ticker = kapi.get_ticker_information(pair)
-            return float(ticker['c'][0][0])  # Last trade price
+            return float(ticker['c'].iloc[0])  # Last trade price
         except Exception as e:
             logger.error(f"Error fetching price for {pair}: {e}")
             return None
@@ -147,59 +152,59 @@ class SlateBot:
                     self.place_order(kapi, pair, 'sell', order_info['volume'])
                     del self.open_orders[order_id]
 
-    def get_trade_action(self, rsi, pair):
-        """Determine trade action based on RSI ladders."""
-        if rsi is None:
+    def get_trade_action(self, rsi, ema, current_price, pair):
+        """Determine trade action based on RSI and EMA."""
+        if rsi is None or ema is None or current_price is None:
             return None, 0
         if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
-                if rsi <= rsi_level:
+                if rsi <= rsi_level and current_price < ema:  # Buy when RSI low and price below EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     return 'buy', volume
             for i, rsi_level in enumerate(self.sell_ladder):
-                if rsi >= rsi_level:
+                if rsi >= rsi_level and current_price > ema:  # Sell when RSI high and price above EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     return 'sell', volume
         elif pair == self.hedge_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
-                if rsi <= rsi_level:
+                if rsi <= rsi_level and current_price < ema:  # Sell ETH when RSI low
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     return 'sell', volume
             for i, rsi_level in enumerate(self.sell_ladder):
-                if rsi >= rsi_level:
+                if rsi >= rsi_level and current_price > ema:  # Buy ETH when RSI high
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     return 'buy', volume
         return None, 0
 
     def execute_trades(self):
-        """Execute trades for main and hedge accounts based on RSI."""
+        """Execute trades for main and hedge accounts based on RSI and EMA."""
         ohlc_main = self.get_ohlc_data(self.kapi_main, self.main_pair)
-        rsi_main = self.get_rsi(ohlc_main)
-        if rsi_main is not None:
-            logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}")
-            action, volume = self.get_trade_action(rsi_main, self.main_pair)
-            if action and volume > 0:
-                current_price = self.get_current_price(self.kapi_main, self.main_pair)
-                if current_price:
+        rsi_main, ema_main = self.get_rsi_and_ema(ohlc_main)
+        if rsi_main is not None and ema_main is not None:
+            logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}, EMA: {ema_main:.2f}")
+            current_price = self.get_current_price(self.kapi_main, self.main_pair)
+            if current_price:
+                action, volume = self.get_trade_action(rsi_main, ema_main, current_price, self.main_pair)
+                if action and volume > 0:
                     self.place_order(self.kapi_main, self.main_pair, action, volume, buy_price=current_price if action == 'buy' else None)
                     if action == 'buy':
                         self.check_stop_loss(self.kapi_main, self.main_pair)
                 if self.kapi_hedge:
                     ohlc_hedge = self.get_ohlc_data(self.kapi_hedge, self.hedge_pair)
-                    rsi_hedge = self.get_rsi(ohlc_hedge)
-                    if rsi_hedge is not None:
-                        logger.info(f"RSI for {self.hedge_pair}: {rsi_hedge:.2f}")
-                        hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, self.hedge_pair)
-                        if hedge_action and hedge_volume > 0:
-                            hedge_price = self.get_current_price(self.kapi_hedge, self.hedge_pair)
-                            if hedge_price:
+                    rsi_hedge, ema_hedge = self.get_rsi_and_ema(ohlc_hedge)
+                    if rsi_hedge is not None and ema_hedge is not None:
+                        logger.info(f"RSI for {self.hedge_pair}: {rsi_hedge:.2f}, EMA: {ema_hedge:.2f}")
+                        hedge_price = self.get_current_price(self.kapi_hedge, self.hedge_pair)
+                        if hedge_price:
+                            hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, ema_hedge, hedge_price, self.hedge_pair)
+                            if hedge_action and hedge_volume > 0:
                                 self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
                                 if hedge_action == 'buy':
                                     self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
-                logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}")
+                logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}, EMA {ema_main:.2f}")
         else:
-            logger.info(f"No RSI calculated for {self.main_pair}")
+            logger.info(f"No RSI/EMA calculated for {self.main_pair}")
 
     def run(self):
         """Main bot loop."""
