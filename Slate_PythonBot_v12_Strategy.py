@@ -48,7 +48,7 @@ class SlateBot:
         self.ema_periods = 12
         self.candles_to_fetch = 50
         self.last_candle_time = 0
-        self.buy_ladder = [50, 45, 40, 35]
+        self.buy_ladder = [55, 50, 45, 40]
         self.sell_ladder = [70, 75, 80, 85]
         self.base_trade_size = 0.005
         self.ladder_multipliers = [1, 1.5, 2, 3]
@@ -114,10 +114,16 @@ class SlateBot:
         return rsi, ema
 
     def get_current_price(self, kapi, pair):
-        """Fetch current price for stop-loss checks."""
+        """Fetch current price for stop-loss and trade checks."""
         try:
             ticker = kapi.get_ticker_information(pair)
-            return float(ticker['c'].iloc[0])  # Last trade price
+            price = ticker['c'].iloc[0]
+            if isinstance(price, list):
+                price = float(price[0])  # Handle nested list
+            else:
+                price = float(price)
+            logger.info(f"Current price for {pair}: {price}")
+            return price
         except Exception as e:
             logger.error(f"Error fetching price for {pair}: {e}")
             return None
@@ -155,25 +161,32 @@ class SlateBot:
     def get_trade_action(self, rsi, ema, current_price, pair):
         """Determine trade action based on RSI and EMA."""
         if rsi is None or ema is None or current_price is None:
+            logger.info(f"No trade for {pair}: RSI {rsi}, EMA {ema}, Current Price {current_price}")
             return None, 0
+        logger.info(f"Checking trade for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level and current_price < ema:  # Buy when RSI low and price below EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
+                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} < EMA {ema:.2f}")
                     return 'buy', volume
             for i, rsi_level in enumerate(self.sell_ladder):
                 if rsi >= rsi_level and current_price > ema:  # Sell when RSI high and price above EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
+                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} > EMA {ema:.2f}")
                     return 'sell', volume
         elif pair == self.hedge_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
                 if rsi <= rsi_level and current_price < ema:  # Sell ETH when RSI low
                     volume = self.base_trade_size * self.ladder_multipliers[i]
+                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} < EMA {ema:.2f}")
                     return 'sell', volume
             for i, rsi_level in enumerate(self.sell_ladder):
                 if rsi >= rsi_level and current_price > ema:  # Buy ETH when RSI high
                     volume = self.base_trade_size * self.ladder_multipliers[i]
+                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} > EMA {ema:.2f}")
                     return 'buy', volume
+        logger.info(f"No trade signal for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         return None, 0
 
     def execute_trades(self):
@@ -202,7 +215,7 @@ class SlateBot:
                                 if hedge_action == 'buy':
                                     self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
-                logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}, EMA {ema_main:.2f}")
+                logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}, EMA {ema_main:.2f}, Price fetch failed")
         else:
             logger.info(f"No RSI/EMA calculated for {self.main_pair}")
 
