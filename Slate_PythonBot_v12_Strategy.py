@@ -56,7 +56,7 @@ class SlateBot:
         self.max_retries = 3
         self.retry_delay = 5
         self.stop_loss_percent = 0.05  # 5% stop-loss
-        self.ema_tolerance = 0.02  # Allow price within 2% of EMA
+        self.ema_tolerance = 0.03  # Allow price within 3% of EMA
         self.open_orders = {}  # Track open orders for stop-loss
         self.missed_signals = deque(maxlen=10)  # Queue for missed signals (max 10)
 
@@ -120,12 +120,25 @@ class SlateBot:
         """Fetch available fiat (USD/ZUSD) or asset balance (XXBT/XETH) from Kraken."""
         for attempt in range(self.max_retries):
             try:
+                # Try get_account_balance first
                 balance = kapi.get_account_balance()
                 logger.info(f"Raw balance response for {pair}: {balance}")
                 fiat_balance = float(balance.get('ZUSD', balance.get('USD', 0)))
                 asset_key = 'XXBT' if pair == 'XBTUSD' else 'XETH'
                 asset_balance = float(balance.get(asset_key, 0))
-                logger.info(f"Available fiat balance: ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
+                if fiat_balance > 0 or asset_balance > 0:
+                    logger.info(f"Available fiat balance: ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
+                    if fiat_balance < 500 and pair == self.main_pair:
+                        logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {pair} trades.")
+                    if asset_balance < 0.2 and pair == self.hedge_pair:
+                        logger.warning(f"Low asset balance: {asset_balance:.6f} ETH. Top up Kraken hedge account.")
+                    return fiat_balance, asset_balance
+                # Fallback to get_trade_balance
+                trade_balance = kapi.get_trade_balance()
+                logger.info(f"Raw trade balance response for {pair}: {trade_balance}")
+                fiat_balance = float(trade_balance.get('eb', 0))  # Equivalent balance in USD
+                asset_balance = float(balance.get(asset_key, 0))
+                logger.info(f"Available fiat balance (trade): ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
                 if fiat_balance < 500 and pair == self.main_pair:
                     logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {pair} trades.")
                 if asset_balance < 0.2 and pair == self.hedge_pair:
@@ -305,7 +318,13 @@ class SlateBot:
                             if hedge_action and hedge_volume > 0:
                                 self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
                                 if hedge_action == 'buy':
-                                    self.check_stop issuance
+                                    self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
+            else:
+                logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}, EMA {ema_main:.2f}, Price fetch failed")
+                self.missed_signals.append((self.main_pair, rsi_main, ema_main, None, time.time()))
+        else:
+            logger.info(f"No RSI/EMA calculated for {self.main_pair}")
+
     def run(self):
         """Main bot loop."""
         logger.info("Starting SlateBot...")
