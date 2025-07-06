@@ -48,13 +48,14 @@ class SlateBot:
         self.ema_periods = 12
         self.candles_to_fetch = 50
         self.last_candle_time = 0
-        self.buy_ladder = [55, 50, 45, 40]
+        self.buy_ladder = [43, 38, 33, 28]
         self.sell_ladder = [70, 75, 80, 85]
         self.base_trade_size = 0.005
         self.ladder_multipliers = [1, 1.5, 2, 3]
         self.max_retries = 3
         self.retry_delay = 5
         self.stop_loss_percent = 0.05  # 5% stop-loss
+        self.ema_tolerance = 0.01  # Allow price within 1% of EMA
         self.open_orders = {}  # Track open orders for stop-loss
 
     def get_ohlc_data(self, kapi, pair):
@@ -113,6 +114,17 @@ class SlateBot:
             return None, None
         return rsi, ema
 
+    def get_account_balance(self, kapi):
+        """Fetch available fiat balance (USD) from Kraken."""
+        try:
+            balance = kapi.get_account_balance()
+            fiat_balance = float(balance.get('ZUSD', 0))
+            logger.info(f"Available fiat balance: ${fiat_balance:.2f}")
+            return fiat_balance
+        except Exception as e:
+            logger.error(f"Error fetching balance: {e}")
+            return 0
+
     def get_current_price(self, kapi, pair):
         """Fetch current price for stop-loss and trade checks."""
         try:
@@ -122,7 +134,7 @@ class SlateBot:
                 price = float(price[0])  # Handle nested list
             else:
                 price = float(price)
-            logger.info(f"Current price for {pair}: {price}")
+            logger.info(f"Current price for {pair}: {price:.2f}")
             return price
         except Exception as e:
             logger.error(f"Error fetching price for {pair}: {e}")
@@ -154,7 +166,7 @@ class SlateBot:
             if order_info['pair'] == pair:
                 buy_price = order_info['buy_price']
                 if current_price <= buy_price * (1 - self.stop_loss_percent):
-                    logger.info(f"Stop-loss triggered for {pair} at {current_price}, selling {order_info['volume']}")
+                    logger.info(f"Stop-loss triggered for {pair} at {current_price:.2f}, selling {order_info['volume']}")
                     self.place_order(kapi, pair, 'sell', order_info['volume'])
                     del self.open_orders[order_id]
 
@@ -166,25 +178,25 @@ class SlateBot:
         logger.info(f"Checking trade for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
-                if rsi <= rsi_level and current_price < ema:  # Buy when RSI low and price below EMA
+                if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):  # Buy when RSI low and price near EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} < EMA {ema:.2f}")
+                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
                     return 'buy', volume
             for i, rsi_level in enumerate(self.sell_ladder):
-                if rsi >= rsi_level and current_price > ema:  # Sell when RSI high and price above EMA
+                if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):  # Sell when RSI high and price above EMA
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} > EMA {ema:.2f}")
+                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
                     return 'sell', volume
         elif pair == self.hedge_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
-                if rsi <= rsi_level and current_price < ema:  # Sell ETH when RSI low
+                if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):  # Sell ETH when RSI low
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} < EMA {ema:.2f}")
+                    logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
                     return 'sell', volume
             for i, rsi_level in enumerate(self.sell_ladder):
-                if rsi >= rsi_level and current_price > ema:  # Buy ETH when RSI high
+                if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):  # Buy ETH when RSI high
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} > EMA {ema:.2f}")
+                    logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
                     return 'buy', volume
         logger.info(f"No trade signal for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         return None, 0
@@ -195,13 +207,17 @@ class SlateBot:
         rsi_main, ema_main = self.get_rsi_and_ema(ohlc_main)
         if rsi_main is not None and ema_main is not None:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}, EMA: {ema_main:.2f}")
+            fiat_balance = self.get_account_balance(self.kapi_main)
             current_price = self.get_current_price(self.kapi_main, self.main_pair)
             if current_price:
                 action, volume = self.get_trade_action(rsi_main, ema_main, current_price, self.main_pair)
                 if action and volume > 0:
-                    self.place_order(self.kapi_main, self.main_pair, action, volume, buy_price=current_price if action == 'buy' else None)
-                    if action == 'buy':
-                        self.check_stop_loss(self.kapi_main, self.main_pair)
+                    if fiat_balance >= volume * current_price or action != 'buy':  # Ensure sufficient funds for buy
+                        self.place_order(self.kapi_main, self.main_pair, action, volume, buy_price=current_price if action == 'buy' else None)
+                        if action == 'buy':
+                            self.check_stop_loss(self.kapi_main, self.main_pair)
+                    else:
+                        logger.warning(f"Insufficient fiat balance (${fiat_balance:.2f}) for {action} order of {volume} {self.main_pair} at {current_price:.2f}")
                 if self.kapi_hedge:
                     ohlc_hedge = self.get_ohlc_data(self.kapi_hedge, self.hedge_pair)
                     rsi_hedge, ema_hedge = self.get_rsi_and_ema(ohlc_hedge)
