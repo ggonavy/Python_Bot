@@ -56,7 +56,7 @@ class SlateBot:
         self.max_retries = 3
         self.retry_delay = 5
         self.stop_loss_percent = 0.05  # 5% stop-loss
-        self.ema_tolerance = 0.01  # Allow price within 1% of EMA
+        self.ema_tolerance = 0.02  # Allow price within 2% of EMA
         self.open_orders = {}  # Track open orders for stop-loss
         self.missed_signals = deque(maxlen=10)  # Queue for missed signals (max 10)
 
@@ -116,38 +116,45 @@ class SlateBot:
             return None, None
         return rsi, ema
 
-    def get_account_balance(self, kapi):
-        """Fetch available fiat balance (USD) or asset balance from Kraken."""
-        try:
-            balance = kapi.get_account_balance()
-            if 'ZUSD' in balance:
-                fiat_balance = float(balance.get('ZUSD', 0))
-                logger.info(f"Available fiat balance: ${fiat_balance:.2f}")
-                return fiat_balance, None
-            elif 'XXBT' in balance or 'XETH' in balance:
-                asset_balance = float(balance.get('XXBT', 0) if self.main_pair == 'XBTUSD' else balance.get('XETH', 0))
-                logger.info(f"Available asset balance: {asset_balance:.6f} {'BTC' if self.main_pair == 'XBTUSD' else 'ETH'}")
-                return None, asset_balance
-            logger.warning("No fiat or asset balance found")
-            return 0, 0
-        except Exception as e:
-            logger.error(f"Error fetching balance: {e}")
-            return 0, 0
+    def get_account_balance(self, kapi, pair):
+        """Fetch available fiat (USD/ZUSD) or asset balance (XXBT/XETH) from Kraken."""
+        for attempt in range(self.max_retries):
+            try:
+                balance = kapi.get_account_balance()
+                logger.info(f"Raw balance response: {balance}")
+                fiat_balance = float(balance.get('ZUSD', balance.get('USD', 0)))
+                asset_key = 'XXBT' if pair == 'XBTUSD' else 'XETH'
+                asset_balance = float(balance.get(asset_key, 0))
+                logger.info(f"Available fiat balance: ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
+                return fiat_balance, asset_balance
+            except Exception as e:
+                logger.error(f"Error fetching balance (attempt {attempt+1}/{self.max_retries}): {e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error("Failed to fetch balance after retries")
+                    return 0, 0
+        return 0, 0
 
     def get_current_price(self, kapi, pair):
         """Fetch current price for stop-loss and trade checks."""
-        try:
-            ticker = kapi.get_ticker_information(pair)
-            price = ticker['c'].iloc[0]
-            if isinstance(price, list):
-                price = float(price[0])  # Handle nested list
-            else:
-                price = float(price)
-            logger.info(f"Current price for {pair}: {price:.2f}")
-            return price
-        except Exception as e:
-            logger.error(f"Error fetching price for {pair}: {e}")
-            return None
+        for attempt in range(self.max_retries):
+            try:
+                ticker = kapi.get_ticker_information(pair)
+                price = ticker['c'].iloc[0]
+                if isinstance(price, list):
+                    price = float(price[0])  # Handle nested list
+                else:
+                    price = float(price)
+                logger.info(f"Current price for {pair}: {price:.2f}")
+                return price
+            except Exception as e:
+                logger.error(f"Error fetching price for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                else:
+                    return None
+        return None
 
     def place_order(self, kapi, pair, side, volume, buy_price=None):
         """Place a market order on Kraken and track for stop-loss."""
@@ -183,14 +190,14 @@ class SlateBot:
         """Determine trade action based on RSI and EMA."""
         if rsi is None or ema is None or current_price is None:
             logger.info(f"No trade for {pair}: RSI {rsi}, EMA {ema}, Current Price {current_price}")
-            self.missed_signals.append((pair, rsi, ema, current_price, time.time()))  # Queue missed signal
+            self.missed_signals.append((pair, rsi, ema, current_price, time.time()))
             return None, 0
         logger.info(f"Checking trade for {pair}: RSI {rsi:.2f}, EMA {ema:.2f}, Current Price {current_price:.2f}")
         if pair == self.main_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
-                if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):  # Buy when RSI low and price near EMA
+                if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    if fiat_balance >= volume * current_price:  # Check sufficient fiat
+                    if fiat_balance >= volume * current_price:
                         logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}, Volume {volume:.6f}")
                         return 'buy', volume
                     else:
@@ -198,9 +205,9 @@ class SlateBot:
                         self.missed_signals.append((pair, rsi, ema, current_price, time.time()))
                         return None, 0
             for i, rsi_level in enumerate(self.sell_ladder):
-                if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):  # Sell when RSI high and price above EMA
+                if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    if asset_balance >= volume:  # Check sufficient asset
+                    if asset_balance >= volume:
                         logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}, Volume {volume:.6f}")
                         return 'sell', volume
                     else:
@@ -209,12 +216,12 @@ class SlateBot:
                         return None, 0
         elif pair == self.hedge_pair:
             for i, rsi_level in enumerate(self.buy_ladder):
-                if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):  # Sell ETH when RSI low
+                if rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     logger.info(f"Sell signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}, Volume {volume:.6f}")
                     return 'sell', volume
             for i, rsi_level in enumerate(self.sell_ladder):
-                if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):  # Buy ETH when RSI high
+                if rsi >= rsi_level and current_price >= ema * (1 - self.ema_tolerance):
                     volume = self.base_trade_size * self.ladder_multipliers[i]
                     logger.info(f"Buy signal for {pair}: RSI {rsi:.2f} >= {rsi_level}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}, Volume {volume:.6f}")
                     return 'buy', volume
@@ -232,13 +239,13 @@ class SlateBot:
             for i, rsi_level in enumerate(self.buy_ladder if pair == self.main_pair else self.sell_ladder):
                 if pair == self.main_pair and rsi <= rsi_level and current_price <= ema * (1 + self.ema_tolerance):
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    fiat_balance, _ = self.get_account_balance(self.kapi_main)
+                    fiat_balance, _ = self.get_account_balance(self.kapi_main, pair)
                     if fiat_balance >= volume * current_price:
                         logger.info(f"Retrying missed buy signal for {pair}: RSI {rsi:.2f} <= {rsi_level}, Price {current_price:.2f} <= EMA {ema:.2f} * {1 + self.ema_tolerance}")
                         return 'buy', volume, pair
                 elif pair == self.main_pair and rsi >= self.sell_ladder[i] and current_price >= ema * (1 - self.ema_tolerance):
                     volume = self.base_trade_size * self.ladder_multipliers[i]
-                    _, asset_balance = self.get_account_balance(self.kapi_main)
+                    _, asset_balance = self.get_account_balance(self.kapi_main, pair)
                     if asset_balance >= volume:
                         logger.info(f"Retrying missed sell signal for {pair}: RSI {rsi:.2f} >= {self.sell_ladder[i]}, Price {current_price:.2f} >= EMA {ema:.2f} * {1 - self.ema_tolerance}")
                         return 'sell', volume, pair
@@ -270,7 +277,9 @@ class SlateBot:
         rsi_main, ema_main = self.get_rsi_and_ema(ohlc_main)
         if rsi_main is not None and ema_main is not None:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}, EMA: {ema_main:.2f}")
-            fiat_balance, asset_balance = self.get_account_balance(self.kapi_main)
+            fiat_balance, asset_balance = self.get_account_balance(self.kapi_main, self.main_pair)
+            if fiat_balance < 500:
+                logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for XBTUSD trades.")
             current_price = self.get_current_price(self.kapi_main, self.main_pair)
             if current_price:
                 action, volume = self.get_trade_action(rsi_main, ema_main, current_price, self.main_pair, fiat_balance, asset_balance)
@@ -283,15 +292,19 @@ class SlateBot:
                     rsi_hedge, ema_hedge = self.get_rsi_and_ema(ohlc_hedge)
                     if rsi_hedge is not None and ema_hedge is not None:
                         logger.info(f"RSI for {self.hedge_pair}: {rsi_hedge:.2f}, EMA: {ema_hedge:.2f}")
+                        hedge_fiat_balance, hedge_asset_balance = self.get_account_balance(self.kapi_hedge, self.hedge_pair)
+                        if hedge_fiat_balance < 500 and hedge_asset_balance < 0.2:
+                            logger.warning(f"Low balance in hedge account: ${hedge_fiat_balance:.2f}, {hedge_asset_balance:.6f} ETH. Top up Kraken hedge account.")
                         hedge_price = self.get_current_price(self.kapi_hedge, self.hedge_pair)
                         if hedge_price:
-                            hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, ema_hedge, hedge_price, self.hedge_pair)
+                            hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, ema_hedge, hedge_price, self.hedge_pair, hedge_fiat_balance, hedge_asset_balance)
                             if hedge_action and hedge_volume > 0:
                                 self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
                                 if hedge_action == 'buy':
                                     self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
                 logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}, EMA {ema_main:.2f}, Price fetch failed")
+                self.missed_signals.append((self.main_pair, rsi_main, ema_main, None, time.time()))
         else:
             logger.info(f"No RSI/EMA calculated for {self.main_pair}")
 
