@@ -121,14 +121,18 @@ class SlateBot:
         for attempt in range(self.max_retries):
             try:
                 balance = kapi.get_account_balance()
-                logger.info(f"Raw balance response: {balance}")
+                logger.info(f"Raw balance response for {pair}: {balance}")
                 fiat_balance = float(balance.get('ZUSD', balance.get('USD', 0)))
                 asset_key = 'XXBT' if pair == 'XBTUSD' else 'XETH'
                 asset_balance = float(balance.get(asset_key, 0))
                 logger.info(f"Available fiat balance: ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
+                if fiat_balance < 500 and pair == self.main_pair:
+                    logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {pair} trades.")
+                if asset_balance < 0.2 and pair == self.hedge_pair:
+                    logger.warning(f"Low asset balance: {asset_balance:.6f} ETH. Top up Kraken hedge account.")
                 return fiat_balance, asset_balance
             except Exception as e:
-                logger.error(f"Error fetching balance (attempt {attempt+1}/{self.max_retries}): {e}")
+                logger.error(f"Error fetching balance for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
                 if attempt < self.max_retries - 1:
                     time.sleep(self.retry_delay)
                 else:
@@ -279,7 +283,7 @@ class SlateBot:
             logger.info(f"RSI for {self.main_pair}: {rsi_main:.2f}, EMA: {ema_main:.2f}")
             fiat_balance, asset_balance = self.get_account_balance(self.kapi_main, self.main_pair)
             if fiat_balance < 500:
-                logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for XBTUSD trades.")
+                logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {self.main_pair} trades.")
             current_price = self.get_current_price(self.kapi_main, self.main_pair)
             if current_price:
                 action, volume = self.get_trade_action(rsi_main, ema_main, current_price, self.main_pair, fiat_balance, asset_balance)
@@ -301,19 +305,13 @@ class SlateBot:
                             if hedge_action and hedge_volume > 0:
                                 self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
                                 if hedge_action == 'buy':
-                                    self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
-            else:
-                logger.info(f"No trade for {self.main_pair}: RSI {rsi_main:.2f}, EMA {ema_main:.2f}, Price fetch failed")
-                self.missed_signals.append((self.main_pair, rsi_main, ema_main, None, time.time()))
-        else:
-            logger.info(f"No RSI/EMA calculated for {self.main_pair}")
-
+                                    self.check_stop issuance
     def run(self):
         """Main bot loop."""
         logger.info("Starting SlateBot...")
         while True:
             try:
-                current_time = int(time.time())
+                current_time = time.time()
                 if current_time - self.last_candle_time >= self.interval * 60:
                     self.execute_trades()
                     self.last_candle_time = current_time
