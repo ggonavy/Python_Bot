@@ -36,12 +36,12 @@ class SlateBot:
     def __init__(self, main_key, main_secret, hedge_key=None, hedge_secret=None):
         """Initialize bot with main and hedge Kraken API credentials."""
         self.k_main = krakenex.API(key=main_key, secret=main_secret)
-        self.kapi_main = KrakenAPI(self.k_main)
+        self.kapi_main = KrakenAPI(self.k_main, tier=2)  # Kraken Pro tier (~50 calls/min)
         self.k_hedge = None
         self.kapi_hedge = None
         if hedge_key and hedge_secret:
             self.k_hedge = krakenex.API(key=hedge_key, secret=hedge_secret)
-            self.kapi_hedge = KrakenAPI(self.k_hedge)
+            self.kapi_hedge = KrakenAPI(self.k_hedge, tier=2)  # Kraken Pro tier
         self.main_pair = 'XBTUSD'
         self.hedge_pair = 'ETHUSD'
         self.interval = 5  # 5-minute candles
@@ -61,6 +61,8 @@ class SlateBot:
         self.missed_signals = deque(maxlen=10)  # Queue for missed signals (max 10)
         self.ohlc_cache = {}  # Cache OHLC data
         self.ohlc_cache_time = {}  # Cache timestamps
+        self.price_cache = {}  # Cache price data
+        self.price_cache_time = {}  # Cache price timestamps
         self.api_call_count = 0  # Track API calls
         self.api_call_window = 60  # 60-second window for rate limiting
         self.api_call_timestamp = time.time()
@@ -178,7 +180,11 @@ class SlateBot:
         return 0, 0
 
     def get_current_price(self, kapi, pair):
-        """Fetch current price for stop-loss and trade checks."""
+        """Fetch current price for stop-loss and trade checks, with caching."""
+        current_time = time.time()
+        if pair in self.price_cache and current_time - self.price_cache_time.get(pair, 0) < 60:  # Cache for 60 seconds
+            logger.info(f"Using cached price for {pair}: {self.price_cache[pair]:.2f}")
+            return self.price_cache[pair]
         for attempt in range(self.max_retries):
             try:
                 self.manage_rate_limit()
@@ -188,6 +194,8 @@ class SlateBot:
                     price = float(price[0])  # Handle nested list
                 else:
                     price = float(price)
+                self.price_cache[pair] = price
+                self.price_cache_time[pair] = current_time
                 logger.info(f"Current price for {pair}: {price:.2f}")
                 return price
             except Exception as e:
@@ -347,7 +355,7 @@ class SlateBot:
                         if hedge_price:
                             hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, ema_hedge, hedge_price, self.hedge_pair, hedge_fiat_balance, hedge_asset_balance)
                             if hedge_action and hedge_volume > 0:
-                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if action == 'buy' else None)
+                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
                                 if hedge_action == 'buy':
                                     self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
