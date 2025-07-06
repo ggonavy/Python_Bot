@@ -43,9 +43,9 @@ class SlateBot:
             self.kapi_hedge = KrakenAPI(self.k_hedge)
         self.main_pair = 'XBTUSD'
         self.hedge_pair = 'ETHUSD'
-        self.interval = 15
+        self.interval = 5  # 5-minute candles
         self.rsi_periods = 14
-        self.ema_periods = 20
+        self.ema_periods = 12
         self.candles_to_fetch = 50
         self.last_candle_time = 0
         self.buy_ladder = [50, 45, 40, 35]
@@ -82,7 +82,7 @@ class SlateBot:
             logger.error(f"Not enough data: {len(ohlc_data)} candlesticks available")
             return None, None
         class RSIStrategy(bt.Strategy):
-            params = (('rsi_period', 14), ('ema_period', 20))
+            params = (('rsi_period', 14), ('ema_period', 12))
             def __init__(self):
                 self.rsi = bt.indicators.RSI_SMA(self.data.close, period=self.params.rsi_period)
                 self.ema = bt.indicators.EMA(self.data.close, period=self.params.ema_period)
