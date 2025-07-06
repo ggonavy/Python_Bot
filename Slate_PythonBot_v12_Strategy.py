@@ -59,24 +59,55 @@ class SlateBot:
         self.ema_tolerance = 0.03  # Allow price within 3% of EMA
         self.open_orders = {}  # Track open orders for stop-loss
         self.missed_signals = deque(maxlen=10)  # Queue for missed signals (max 10)
+        self.ohlc_cache = {}  # Cache OHLC data
+        self.ohlc_cache_time = {}  # Cache timestamps
+        self.api_call_count = 0  # Track API calls
+        self.api_call_window = 60  # 60-second window for rate limiting
+        self.api_call_timestamp = time.time()
+
+    def manage_rate_limit(self):
+        """Manage Kraken API rate limits (~50 calls/minute for Pro tier)."""
+        current_time = time.time()
+        if current_time - self.api_call_timestamp >= self.api_call_window:
+            self.api_call_count = 0  # Reset counter after 60 seconds
+            self.api_call_timestamp = current_time
+        self.api_call_count += 1
+        if self.api_call_count >= 45:  # Buffer below 50 calls/minute
+            sleep_time = max(0, self.api_call_window - (current_time - self.api_call_timestamp))
+            logger.warning(f"Approaching rate limit (count={self.api_call_count}). Sleeping for {sleep_time:.2f} seconds.")
+            time.sleep(sleep_time)
+            self.api_call_count = 0
+            self.api_call_timestamp = time.time()
 
     def get_ohlc_data(self, kapi, pair):
-        """Fetch OHLC data for the specified pair, limited to 50 candlesticks."""
+        """Fetch OHLC data for the specified pair, limited to 50 candlesticks, with caching."""
+        current_time = time.time()
+        if pair in self.ohlc_cache and current_time - self.ohlc_cache_time.get(pair, 0) < 300:  # Cache for 5 minutes
+            logger.info(f"Using cached OHLC data for {pair}")
+            return self.ohlc_cache[pair]
         for attempt in range(self.max_retries):
             try:
+                self.manage_rate_limit()
                 since = int(time.time()) - (self.candles_to_fetch * self.interval * 60 * 1.5)
                 ohlc, _ = kapi.get_ohlc_data(pair, interval=self.interval, since=since, ascending=True)
                 ohlc = ohlc.tail(self.candles_to_fetch)
                 logger.info(f"Retrieved {len(ohlc)} candlesticks for {pair}")
                 if len(ohlc) < self.candles_to_fetch:
                     logger.warning(f"Only {len(ohlc)} candlesticks for {pair}, needed {self.candles_to_fetch}")
+                self.ohlc_cache[pair] = ohlc
+                self.ohlc_cache_time[pair] = current_time
                 return ohlc
             except Exception as e:
-                logger.error(f"Error fetching OHLC for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
+                if "EGeneral:Temporary lockout" in str(e):
+                    sleep_time = self.retry_delay * (2 ** attempt)  # Exponential backoff: 5s, 10s, 20s
+                    logger.warning(f"Rate limit exceeded for {pair}. Sleeping for {sleep_time} seconds.")
+                    time.sleep(sleep_time)
                 else:
-                    return None
+                    logger.error(f"Error fetching OHLC for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                    else:
+                        return None
         return None
 
     def get_rsi_and_ema(self, ohlc_data):
@@ -120,45 +151,37 @@ class SlateBot:
         """Fetch available fiat (USD/ZUSD/USDT) or asset balance (XXBT/XETH) from Kraken."""
         for attempt in range(self.max_retries):
             try:
-                # Prioritize get_account_balance
+                self.manage_rate_limit()
                 balance = kapi.get_account_balance()
                 logger.info(f"Raw balance response for {pair}: {balance}")
                 fiat_balance = float(balance.get('ZUSD', balance.get('USD', balance.get('USDT', 0))))
                 asset_key = 'XXBT' if pair == 'XBTUSD' else 'XETH'
                 asset_balance = float(balance.get(asset_key, 0))
-                if fiat_balance > 0 or asset_balance > 0:
-                    logger.info(f"Available fiat balance: ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
-                    if fiat_balance < 500 and pair == self.main_pair:
-                        logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {pair} trades.")
-                    if asset_balance < 0.2 and pair == self.hedge_pair:
-                        logger.warning(f"Low asset balance: {asset_balance:.6f} ETH. Top up Kraken hedge account.")
-                    return fiat_balance, asset_balance
-                # Fallback to get_trade_balance only if no fiat or asset found
-                trade_balance = kapi.get_trade_balance()
-                logger.info(f"Raw trade balance response for {pair}: {trade_balance}")
-                fiat_balance = float(trade_balance.get('eb', 0)) if 'eb' in trade_balance else 0
-                if fiat_balance > 0:
-                    logger.info(f"Available fiat balance (trade): ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
-                    if fiat_balance < 500 and pair == self.main_pair:
-                        logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {pair} trades.")
-                    if asset_balance < 0.2 and pair == self.hedge_pair:
-                        logger.warning(f"Low asset balance: {asset_balance:.6f} ETH. Top up Kraken hedge account.")
-                    return fiat_balance, asset_balance
-                logger.warning(f"No fiat or asset balance detected for {pair}. Check Kraken API key permissions or account funds.")
-                return 0, 0
+                logger.info(f"Available fiat balance: ${fiat_balance:.2f}, asset balance: {asset_balance:.6f} {'BTC' if pair == 'XBTUSD' else 'ETH'}")
+                if fiat_balance < 500 and pair == self.main_pair:
+                    logger.warning(f"Low fiat balance: ${fiat_balance:.2f}. Top up Kraken account for {pair} trades.")
+                if asset_balance < 0.2 and pair == self.hedge_pair:
+                    logger.warning(f"Low asset balance: {asset_balance:.6f} ETH. Top up Kraken hedge account.")
+                return fiat_balance, asset_balance
             except Exception as e:
-                logger.error(f"Error fetching balance for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
+                if "EGeneral:Temporary lockout" in str(e):
+                    sleep_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"Rate limit exceeded for balance fetch. Sleeping for {sleep_time} seconds.")
+                    time.sleep(sleep_time)
                 else:
-                    logger.error("Failed to fetch balance after retries. Check Kraken API key permissions.")
-                    return 0, 0
+                    logger.error(f"Error fetching balance for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                    else:
+                        logger.error("Failed to fetch balance after retries. Check Kraken API key permissions.")
+                        return 0, 0
         return 0, 0
 
     def get_current_price(self, kapi, pair):
         """Fetch current price for stop-loss and trade checks."""
         for attempt in range(self.max_retries):
             try:
+                self.manage_rate_limit()
                 ticker = kapi.get_ticker_information(pair)
                 price = ticker['c'].iloc[0]
                 if isinstance(price, list):
@@ -168,16 +191,22 @@ class SlateBot:
                 logger.info(f"Current price for {pair}: {price:.2f}")
                 return price
             except Exception as e:
-                logger.error(f"Error fetching price for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
+                if "EGeneral:Temporary lockout" in str(e):
+                    sleep_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"Rate limit exceeded for price fetch. Sleeping for {sleep_time} seconds.")
+                    time.sleep(sleep_time)
                 else:
-                    return None
+                    logger.error(f"Error fetching price for {pair} (attempt {attempt+1}/{self.max_retries}): {e}")
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                    else:
+                        return None
         return None
 
     def place_order(self, kapi, pair, side, volume, buy_price=None):
         """Place a market order on Kraken and track for stop-loss."""
         try:
+            self.manage_rate_limit()
             order = kapi.add_standard_order(
                 pair=pair,
                 type=side,
@@ -318,7 +347,7 @@ class SlateBot:
                         if hedge_price:
                             hedge_action, hedge_volume = self.get_trade_action(rsi_hedge, ema_hedge, hedge_price, self.hedge_pair, hedge_fiat_balance, hedge_asset_balance)
                             if hedge_action and hedge_volume > 0:
-                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if hedge_action == 'buy' else None)
+                                self.place_order(self.kapi_hedge, self.hedge_pair, hedge_action, hedge_volume, buy_price=hedge_price if action == 'buy' else None)
                                 if hedge_action == 'buy':
                                     self.check_stop_loss(self.kapi_hedge, self.hedge_pair)
             else:
