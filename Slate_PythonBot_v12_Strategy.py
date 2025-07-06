@@ -36,12 +36,12 @@ class SlateBot:
     def __init__(self, main_key, main_secret, hedge_key=None, hedge_secret=None):
         """Initialize bot with main and hedge Kraken API credentials."""
         self.k_main = krakenex.API(key=main_key, secret=main_secret)
-        self.kapi_main = KrakenAPI(self.k_main, tier=2)  # Kraken Pro tier (~50 calls/min)
+        self.kapi_main = KrakenAPI(self.k_main, tier=3)  # Kraken Intermediate tier (~80 calls/min)
         self.k_hedge = None
         self.kapi_hedge = None
         if hedge_key and hedge_secret:
             self.k_hedge = krakenex.API(key=hedge_key, secret=hedge_secret)
-            self.kapi_hedge = KrakenAPI(self.k_hedge, tier=2)  # Kraken Pro tier
+            self.kapi_hedge = KrakenAPI(self.k_hedge, tier=3)  # Kraken Intermediate tier
         self.main_pair = 'XBTUSD'
         self.hedge_pair = 'ETHUSD'
         self.interval = 5  # 5-minute candles
@@ -55,6 +55,7 @@ class SlateBot:
         self.ladder_multipliers = [1, 1.5, 2, 3]
         self.max_retries = 3
         self.retry_delay = 5
+        self.max_backoff = 30  # Max backoff 30s
         self.stop_loss_percent = 0.05  # 5% stop-loss
         self.ema_tolerance = 0.03  # Allow price within 3% of EMA
         self.open_orders = {}  # Track open orders for stop-loss
@@ -68,13 +69,13 @@ class SlateBot:
         self.api_call_timestamp = time.time()
 
     def manage_rate_limit(self):
-        """Manage Kraken API rate limits (~50 calls/minute for Pro tier)."""
+        """Manage Kraken API rate limits (~80 calls/minute for Intermediate tier)."""
         current_time = time.time()
         if current_time - self.api_call_timestamp >= self.api_call_window:
             self.api_call_count = 0  # Reset counter after 60 seconds
             self.api_call_timestamp = current_time
         self.api_call_count += 1
-        if self.api_call_count >= 45:  # Buffer below 50 calls/minute
+        if self.api_call_count >= 70:  # Buffer below 80 calls/minute
             sleep_time = max(0, self.api_call_window - (current_time - self.api_call_timestamp))
             logger.warning(f"Approaching rate limit (count={self.api_call_count}). Sleeping for {sleep_time:.2f} seconds.")
             time.sleep(sleep_time)
@@ -101,7 +102,7 @@ class SlateBot:
                 return ohlc
             except Exception as e:
                 if "EGeneral:Temporary lockout" in str(e):
-                    sleep_time = self.retry_delay * (2 ** attempt)  # Exponential backoff: 5s, 10s, 20s
+                    sleep_time = min(self.retry_delay * (2 ** attempt), self.max_backoff)  # Exponential backoff: 5s, 10s, 30s
                     logger.warning(f"Rate limit exceeded for {pair}. Sleeping for {sleep_time} seconds.")
                     time.sleep(sleep_time)
                 else:
@@ -167,7 +168,7 @@ class SlateBot:
                 return fiat_balance, asset_balance
             except Exception as e:
                 if "EGeneral:Temporary lockout" in str(e):
-                    sleep_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                    sleep_time = min(self.retry_delay * (2 ** attempt), self.max_backoff)  # Exponential backoff
                     logger.warning(f"Rate limit exceeded for balance fetch. Sleeping for {sleep_time} seconds.")
                     time.sleep(sleep_time)
                 else:
@@ -200,7 +201,7 @@ class SlateBot:
                 return price
             except Exception as e:
                 if "EGeneral:Temporary lockout" in str(e):
-                    sleep_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                    sleep_time = min(self.retry_delay * (2 ** attempt), self.max_backoff)  # Exponential backoff
                     logger.warning(f"Rate limit exceeded for price fetch. Sleeping for {sleep_time} seconds.")
                     time.sleep(sleep_time)
                 else:
