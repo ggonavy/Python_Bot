@@ -9,13 +9,22 @@ api_key = os.getenv('COINBASE_API_KEY')
 api_secret = os.getenv('COINBASE_API_SECRET')
 api_passphrase = os.getenv('COINBASE_PASSPHRASE')
 
+# Validate credentials
+if not all([api_key, api_secret, api_passphrase]):
+    print(f"{datetime.now()}: Error: Missing API credentials")
+    exit(1)
+
 # Initialize Coinbase client
-client = ccxt.coinbase({
-    'apiKey': api_key,
-    'secret': api_secret,
-    'password': api_passphrase,
-    'enableRateLimit': True
-})
+try:
+    client = ccxt.coinbase({
+        'apiKey': api_key,
+        'secret': api_secret,
+        'password': api_passphrase,
+        'enableRateLimit': True
+    })
+except Exception as e:
+    print(f"{datetime.now()}: Error initializing client: {str(e)}")
+    exit(1)
 
 # Trading parameters
 PAIR = 'BTC/USD'
@@ -63,7 +72,7 @@ class PriceFeed:
                 log(f"Price: ${self.latest_price:.2f}")
                 await asyncio.sleep(5)
             except Exception as e:
-                log(f"WebSocket Error: {str(e)}")
+                log(f"Price Error: {str(e)}")
                 await asyncio.sleep(5)
 
     def get_price(self):
