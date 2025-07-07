@@ -1,4 +1,4 @@
-import cbpro
+import ccxt
 import pandas as pd
 import time
 import os
@@ -9,11 +9,15 @@ api_key = os.getenv('COINBASE_API_KEY')
 api_secret = os.getenv('COINBASE_API_SECRET')
 api_passphrase = os.getenv('COINBASE_PASSPHRASE')
 
-# Initialize REST client
-client = cbpro.AuthenticatedClient(api_key, api_secret, api_passphrase)
+# Initialize Coinbase Pro client
+client = ccxt.coinbasepro({
+    'apiKey': api_key,
+    'secret': api_secret,
+    'password': api_passphrase,
+})
 
 # Trading parameters
-PAIR = 'BTC-USD'
+PAIR = 'BTC/USD'  # ccxt uses BTC/USD
 RSI_PERIOD = 14
 BUY_RSI = [47, 42, 37, 32]
 SELL_RSI = [73, 77, 81, 85]
@@ -27,8 +31,8 @@ def log(message):
 
 # Get historical data for RSI
 def get_rsi(pair, period=RSI_PERIOD):
-    candles = client.get_product_historic_rates(pair, granularity=300)  # 5-min candles
-    df = pd.DataFrame(candles, columns=['time', 'low', 'high', 'open', 'close', 'volume'])
+    candles = client.fetch_ohlcv(pair, timeframe='5m', limit=period + 1)
+    df = pd.DataFrame(candles, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
     df['close'] = df['close'].astype(float)
     df = df.sort_values('time', ascending=True)
     deltas = df['close'].diff()
@@ -41,23 +45,29 @@ def get_rsi(pair, period=RSI_PERIOD):
     return rsi, df['close'].iloc[-1]
 
 # WebSocket for real-time price
-class PriceFeed(cbpro.WebsocketClient):
+class PriceFeed:
     def __init__(self):
-        super().__init__(products=[PAIR], channels=['ticker'])
         self.latest_price = None
+        self.ws = client  # ccxt.async_support for WebSocket
 
-    def on_message(self, msg):
-        if msg['type'] == 'ticker' and msg['product_id'] == PAIR:
-            self.latest_price = float(msg['price'])
-            log(f"WebSocket Price: ${self.latest_price:.2f}")
+    async def subscribe(self, pair):
+        while True:
+            try:
+                ticker = await self.ws.fetch_ticker(pair)
+                self.latest_price = float(ticker['last'])
+                log(f"WebSocket Price: ${self.latest_price:.2f}")
+                await asyncio.sleep(5)
+            except Exception as e:
+                log(f"WebSocket Error: {str(e)}")
+                await asyncio.sleep(5)
 
     def get_price(self):
         return self.latest_price
 
 # Main trading loop
-def main():
+async def main():
     price_feed = PriceFeed()
-    price_feed.start()
+    asyncio.create_task(price_feed.subscribe(PAIR))
 
     while True:
         try:
@@ -66,26 +76,24 @@ def main():
             price = price_feed.get_price()
             if not price:
                 log("Waiting for WebSocket price...")
-                time.sleep(5)
+                await asyncio.sleep(5)
                 continue
             log(f"Price: ${price:.2f} | RSI: {rsi:.2f}")
 
             # Get balances
-            accounts = client.get_accounts()
-            btc_balance = float(next(acc for acc in accounts if acc['currency'] == 'BTC')['available'])
-            usd_balance = float(next(acc for acc in accounts if acc['currency'] == 'USD')['available'])
+            balance = client.fetch_balance()
+            btc_balance = float(balance['BTC']['free'])
+            usd_balance = float(balance['USD']['free'])
             log(f"BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
 
             # Buy logic (limit order)
             for rsi_level in BUY_RSI:
                 if rsi <= rsi_level and usd_balance >= price * TRADE_AMOUNT:
                     buy_price = price * (1 - PRICE_TOLERANCE)
-                    order = client.place_limit_order(
-                        product_id=PAIR,
-                        side='buy',
-                        size=TRADE_AMOUNT,
-                        price=buy_price,
-                        time_in_force='GTC'
+                    order = client.create_limit_buy_order(
+                        symbol=PAIR,
+                        amount=TRADE_AMOUNT,
+                        price=buy_price
                     )
                     log(f"Buy {TRADE_AMOUNT} BTC at ${buy_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
                     break
@@ -94,22 +102,21 @@ def main():
             for rsi_level in SELL_RSI:
                 if rsi >= rsi_level and btc_balance >= TRADE_AMOUNT:
                     sell_price = price * (1 + PRICE_TOLERANCE)
-                    order = client.place_limit_order(
-                        product_id=PAIR,
-                        side='sell',
-                        size=TRADE_AMOUNT,
-                        price=sell_price,
-                        time_in_force='GTC'
+                    order = client.create_limit_sell_order(
+                        symbol=PAIR,
+                        amount=TRADE_AMOUNT,
+                        price=sell_price
                     )
                     log(f"Sell {TRADE_AMOUNT} BTC at ${sell_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
                     break
 
         except Exception as e:
             log(f"Error: {str(e)}")
-            time.sleep(5)  # Retry after delay
+            await asyncio.sleep(5)  # Retry after delay
 
-        time.sleep(SLEEP_INTERVAL)
+        await asyncio.sleep(SLEEP_INTERVAL)
 
 # Run bot
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
