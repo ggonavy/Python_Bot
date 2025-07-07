@@ -6,3 +6,4 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python CoinbaseBot.py
     repo: https://github.com/ggonavy/Python_Bot
+    runtime: python-3.10
