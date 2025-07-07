@@ -15,13 +15,13 @@ port = int(os.getenv('PORT', 8000))
 # Validate credentials
 def validate_credentials():
     if not all([api_key, api_secret, api_passphrase]):
-        log("Error: Missing API credentials")
+        log(f"Error: Missing API credentials - key: {bool(api_key)}, secret: {bool(api_secret)}, passphrase: {bool(api_passphrase)}")
         exit(1)
     try:
         # Validate base64 secret
         base64.b64decode(api_secret, validate=True)
     except Exception as e:
-        log(f"Error: Invalid COINBASE_API_SECRET format: {str(e)}")
+        log(f"Error: Invalid COINBASE_API_SECRET format: {str(e)} (secret length: {len(api_secret)})")
         exit(1)
     if not (30 <= len(api_key) <= 40):
         log(f"Error: COINBASE_API_KEY length invalid ({len(api_key)})")
@@ -43,6 +43,7 @@ try:
         'password': api_passphrase,
         'enableRateLimit': True
     })
+    log("Coinbase client initialized successfully")
 except Exception as e:
     log(f"Error initializing client: {str(e)}")
     exit(1)
@@ -113,6 +114,7 @@ async def start_server():
         log(f"HTTP server started on port {port}")
     except Exception as e:
         log(f"HTTP Server Error: {str(e)}")
+        exit(1)
 
 # Main trading loop
 async def main():
