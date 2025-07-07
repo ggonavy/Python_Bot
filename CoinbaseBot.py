@@ -54,10 +54,9 @@ class PriceFeed:
     def __init__(self, exchange):
         self.latest_price = None
         self.exchange = exchange
-        self.running = True
 
     async def subscribe(self, pair):
-        while self.running:
+        while True:
             try:
                 ticker = await self.exchange.fetch_ticker(pair)
                 self.latest_price = float(ticker['last'])
@@ -70,15 +69,12 @@ class PriceFeed:
     def get_price(self):
         return self.latest_price
 
-    def stop(self):
-        self.running = False
-
 # Main trading loop
 async def main():
-    price_feed = PriceFeed(client)
-    price_task = asyncio.create_task(price_feed.subscribe(PAIR))
-
     try:
+        price_feed = PriceFeed(client)
+        asyncio.create_task(price_feed.subscribe(PAIR))
+
         while True:
             try:
                 # Get RSI and price
@@ -96,8 +92,8 @@ async def main():
 
                 # Get balances
                 balance = await client.fetch_balance()
-                btc_balance = float(balance['BTC']['free'])
-                usd_balance = float(balance['USD']['free'])
+                btc_balance = float(balance.get('BTC', {}).get('free', 0))
+                usd_balance = float(balance.get('USD', {}).get('free', 0))
                 log(f"BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
 
                 # Buy logic (limit order)
@@ -131,10 +127,8 @@ async def main():
             await asyncio.sleep(SLEEP_INTERVAL)
 
     finally:
-        price_feed.stop()
         await client.close_connection()
 
 # Run bot
 if __name__ == '__main__':
     asyncio.run(main())
-    
