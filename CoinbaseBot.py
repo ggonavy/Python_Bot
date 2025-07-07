@@ -1,5 +1,5 @@
-import coinbase_advanced
-from coinbase_advanced import RESTClient, WSClient
+import coinbase.client
+from coinbase.client import Client, WebsocketClient
 import pandas as pd
 import time
 import os
@@ -9,9 +9,10 @@ from datetime import datetime
 # Load API credentials
 api_key = os.getenv('COINBASE_API_KEY')
 api_secret = os.getenv('COINBASE_API_SECRET')
+api_passphrase = os.getenv('COINBASE_PASSPHRASE')
 
-# Initialize REST client with rate limit headers
-client = RESTClient(api_key=api_key, api_secret=api_secret, rate_limit_headers=True)
+# Initialize REST client
+client = Client(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
 
 # Trading parameters
 PAIR = 'BTC-USD'
@@ -29,7 +30,7 @@ def log(message):
 # Get historical data for RSI
 def get_rsi(pair, period=RSI_PERIOD):
     candles = client.get_candles(pair, granularity=300, limit=period + 1)  # 5-min candles
-    df = pd.DataFrame(candles['candles'], columns=['start', 'low', 'high', 'open', 'close', 'volume'])
+    df = pd.DataFrame(candles.get('candles', []), columns=['start', 'low', 'high', 'open', 'close', 'volume'])
     df['close'] = df['close'].astype(float)
     df = df.sort_values('start', ascending=True)
     deltas = df['close'].diff()
@@ -45,7 +46,7 @@ def get_rsi(pair, period=RSI_PERIOD):
 class PriceFeed:
     def __init__(self):
         self.latest_price = None
-        self.ws = WSClient(api_key=api_key, api_secret=api_secret)
+        self.ws = WebsocketClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
 
     async def subscribe(self, pair):
         await self.ws.subscribe([{'name': 'ticker', 'product_ids': [pair]}])
@@ -86,11 +87,11 @@ async def main():
                     order = client.place_limit_order(
                         product_id=PAIR,
                         side='buy',
-                        size=TRADE_AMOUNT,
-                        price=buy_price,
+                        size=str(TRADE_AMOUNT),
+                        price=str(buy_price),
                         time_in_force='GTC'
                     )
-                    log(f"Buy {TRADE_AMOUNT} BTC at ${buy_price:.2f} (RSI: {rsi:.2f}) | Order: {order['order_id']}")
+                    log(f"Buy {TRADE_AMOUNT} BTC at ${buy_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
                     break
 
             # Sell logic (limit order)
@@ -100,11 +101,11 @@ async def main():
                     order = client.place_limit_order(
                         product_id=PAIR,
                         side='sell',
-                        size=TRADE_AMOUNT,
-                        price=sell_price,
+                        size=str(TRADE_AMOUNT),
+                        price=str(sell_price),
                         time_in_force='GTC'
                     )
-                    log(f"Sell {TRADE_AMOUNT} BTC at ${sell_price:.2f} (RSI: {rsi:.2f}) | Order: {order['order_id']}")
+                    log(f"Sell {TRADE_AMOUNT} BTC at ${sell_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
                     break
 
         except Exception as e:
