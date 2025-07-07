@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: Python_Bot
     env: python
     plan: standard
@@ -7,3 +7,6 @@ services:
     startCommand: python CoinbaseBot.py
     repo: https://github.com/ggonavy/Python_Bot
     runtime: python-3.10.12
+    envVars:
+      - key: PORT
+        value: 8000
