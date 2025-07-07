@@ -2,19 +2,40 @@ import ccxt.async_support as ccxt
 import pandas as pd
 import asyncio
 import os
+import base64
 from datetime import datetime
+from aiohttp import web
 
 # Load API credentials
 api_key = os.getenv('COINBASE_API_KEY')
 api_secret = os.getenv('COINBASE_API_SECRET')
 api_passphrase = os.getenv('COINBASE_PASSPHRASE')
+port = int(os.getenv('PORT', 8000))
 
 # Validate credentials
-if not all([api_key, api_secret, api_passphrase]):
-    print(f"{datetime.now()}: Error: Missing API credentials")
-    exit(1)
+def validate_credentials():
+    if not all([api_key, api_secret, api_passphrase]):
+        log("Error: Missing API credentials")
+        exit(1)
+    try:
+        # Validate base64 secret
+        base64.b64decode(api_secret, validate=True)
+    except Exception as e:
+        log(f"Error: Invalid COINBASE_API_SECRET format: {str(e)}")
+        exit(1)
+    if not (30 <= len(api_key) <= 40):
+        log(f"Error: COINBASE_API_KEY length invalid ({len(api_key)})")
+        exit(1)
+    if not (40 <= len(api_secret) <= 50):
+        log(f"Error: COINBASE_API_SECRET length invalid ({len(api_secret)})")
+        exit(1)
+
+# Logging
+def log(message):
+    print(f"{datetime.now()}: {message}")
 
 # Initialize Coinbase client
+validate_credentials()
 try:
     client = ccxt.coinbase({
         'apiKey': api_key,
@@ -23,7 +44,7 @@ try:
         'enableRateLimit': True
     })
 except Exception as e:
-    print(f"{datetime.now()}: Error initializing client: {str(e)}")
+    log(f"Error initializing client: {str(e)}")
     exit(1)
 
 # Trading parameters
@@ -34,10 +55,6 @@ SELL_RSI = [73, 77, 81, 85]
 SLEEP_INTERVAL = 60  # seconds
 TRADE_AMOUNT = 0.01675  # ~1/10th of 0.1675 BTC
 PRICE_TOLERANCE = 0.005  # 0.5% price slippage for limit orders
-
-# Logging
-def log(message):
-    print(f"{datetime.now()}: {message}")
 
 # Get historical data for RSI
 async def get_rsi(pair, period=RSI_PERIOD):
@@ -81,10 +98,27 @@ class PriceFeed:
     def stop(self):
         self.running = False
 
+# Minimal HTTP server for Render
+async def handle_health_check(request):
+    return web.Response(text="Bot is running")
+
+async def start_server():
+    try:
+        app = web.Application()
+        app.add_routes([web.get('/', handle_health_check)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        log(f"HTTP server started on port {port}")
+    except Exception as e:
+        log(f"HTTP Server Error: {str(e)}")
+
 # Main trading loop
 async def main():
     price_feed = PriceFeed()
     price_task = asyncio.create_task(price_feed.subscribe(PAIR, client))
+    server_task = asyncio.create_task(start_server())
 
     try:
         while True:
@@ -144,6 +178,6 @@ async def main():
         price_feed.stop()
         await client.close_connection()
 
-# Run bot
+# Run bot and server
 if __name__ == '__main__':
     asyncio.run(main())
