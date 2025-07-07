@@ -1,4 +1,5 @@
-import coinbase.rest
+import coinbase
+from coinbase import CoinbaseClient
 from coinbase.websocket import WebsocketClient
 import pandas as pd
 import time
@@ -12,7 +13,7 @@ api_secret = os.getenv('COINBASE_API_SECRET')
 api_passphrase = os.getenv('COINBASE_PASSPHRASE')
 
 # Initialize REST client
-client = coinbase.rest.RESTClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
+client = CoinbaseClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
 
 # Trading parameters
 PAIR = 'BTC-USD'
@@ -29,7 +30,6 @@ def log(message):
 
 # Get historical data for RSI
 def get_rsi(pair, period=RSI_PERIOD):
-    # Get candles (5-min, enough for RSI)
     candles = client.get_candles(product_id=pair, query_params={'granularity': 'FIVE_MINUTE', 'limit': period + 1})
     df = pd.DataFrame(candles.get('candles', []), columns=['start', 'low', 'high', 'open', 'close', 'volume'])
     df['close'] = df['close'].astype(float)
