@@ -1,2 +1,5 @@
 cbpro==1.1.4
+websocket-client==0.57.0
+requests==2.31.0
+six==1.16.0
 pandas
