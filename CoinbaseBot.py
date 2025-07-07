@@ -1,5 +1,5 @@
-import coinbase_advanced_py
-from coinbase_advanced_py import RESTClient, WSClient
+import coinbase_advanced
+from coinbase_advanced import RESTClient, WSClient
 import pandas as pd
 import time
 import os
