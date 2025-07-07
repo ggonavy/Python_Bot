@@ -54,9 +54,10 @@ class PriceFeed:
     def __init__(self, exchange):
         self.latest_price = None
         self.exchange = exchange
+        self.running = True
 
     async def subscribe(self, pair):
-        while True:
+        while self.running:
             try:
                 ticker = await self.exchange.fetch_ticker(pair)
                 self.latest_price = float(ticker['last'])
@@ -69,69 +70,71 @@ class PriceFeed:
     def get_price(self):
         return self.latest_price
 
+    def stop(self):
+        self.running = False
+
 # Main trading loop
 async def main():
     price_feed = PriceFeed(client)
-    asyncio.create_task(price_feed.subscribe(PAIR))
+    price_task = asyncio.create_task(price_feed.subscribe(PAIR))
 
-    while True:
-        try:
-            # Get RSI and price
-            rsi, _ = await get_rsi(PAIR)
-            if rsi is None:
-                log("Skipping trade due to RSI fetch error")
+    try:
+        while True:
+            try:
+                # Get RSI and price
+                rsi, _ = await get_rsi(PAIR)
+                if rsi is None:
+                    log("Skipping trade due to RSI fetch error")
+                    await asyncio.sleep(5)
+                    continue
+                price = price_feed.get_price()
+                if not price:
+                    log("Waiting for WebSocket price...")
+                    await asyncio.sleep(5)
+                    continue
+                log(f"Price: ${price:.2f} | RSI: {rsi:.2f}")
+
+                # Get balances
+                balance = await client.fetch_balance()
+                btc_balance = float(balance['BTC']['free'])
+                usd_balance = float(balance['USD']['free'])
+                log(f"BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
+
+                # Buy logic (limit order)
+                for rsi_level in BUY_RSI:
+                    if rsi <= rsi_level and usd_balance >= price * TRADE_AMOUNT:
+                        buy_price = price * (1 - PRICE_TOLERANCE)
+                        order = await client.create_limit_buy_order(
+                            symbol=PAIR,
+                            amount=TRADE_AMOUNT,
+                            price=buy_price
+                        )
+                        log(f"Buy {TRADE_AMOUNT} BTC at ${buy_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
+                        break
+
+                # Sell logic (limit order)
+                for rsi_level in SELL_RSI:
+                    if rsi >= rsi_level and btc_balance >= TRADE_AMOUNT:
+                        sell_price = price * (1 + PRICE_TOLERANCE)
+                        order = await client.create_limit_sell_order(
+                            symbol=PAIR,
+                            amount=TRADE_AMOUNT,
+                            price=sell_price
+                        )
+                        log(f"Sell {TRADE_AMOUNT} BTC at ${sell_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
+                        break
+
+            except Exception as e:
+                log(f"Error: {str(e)}")
                 await asyncio.sleep(5)
-                continue
-            price = price_feed.get_price()
-            if not price:
-                log("Waiting for WebSocket price...")
-                await asyncio.sleep(5)
-                continue
-            log(f"Price: ${price:.2f} | RSI: {rsi:.2f}")
 
-            # Get balances
-            balance = await client.fetch_balance()
-            btc_balance = float(balance['BTC']['free'])
-            usd_balance = float(balance['USD']['free'])
-            log(f"BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
+            await asyncio.sleep(SLEEP_INTERVAL)
 
-            # Buy logic (limit order)
-            for rsi_level in BUY_RSI:
-                if rsi <= rsi_level and usd_balance >= price * TRADE_AMOUNT:
-                    buy_price = price * (1 - PRICE_TOLERANCE)
-                    order = await client.create_limit_buy_order(
-                        symbol=PAIR,
-                        amount=TRADE_AMOUNT,
-                        price=buy_price
-                    )
-                    log(f"Buy {TRADE_AMOUNT} BTC at ${buy_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
-                    break
-
-            # Sell logic (limit order)
-            for rsi_level in SELL_RSI:
-                if rsi >= rsi_level and btc_balance >= TRADE_AMOUNT:
-                    sell_price = price * (1 + PRICE_TOLERANCE)
-                    order = await client.create_limit_sell_order(
-                        symbol=PAIR,
-                        amount=TRADE_AMOUNT,
-                        price=sell_price
-                    )
-                    log(f"Sell {TRADE_AMOUNT} BTC at ${sell_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
-                    break
-
-        except Exception as e:
-            log(f"Error: {str(e)}")
-            await asyncio.sleep(5)
-
-        await asyncio.sleep(SLEEP_INTERVAL)
-
-# Cleanup
-async def cleanup():
-    await client.close_connection()
+    finally:
+        price_feed.stop()
+        await client.close_connection()
 
 # Run bot
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    finally:
-        asyncio.run(cleanup())
+    asyncio.run(main())
+    
