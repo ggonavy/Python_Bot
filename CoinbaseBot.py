@@ -51,15 +51,14 @@ async def get_rsi(pair, period=RSI_PERIOD):
 
 # WebSocket for real-time price
 class PriceFeed:
-    def __init__(self, exchange):
+    def __init__(self):
         self.latest_price = None
-        self.exchange = exchange
         self.running = True
 
-    async def subscribe(self, pair):
+    async def subscribe(self, pair, exchange):
         while self.running:
             try:
-                ticker = await self.exchange.fetch_ticker(pair)
+                ticker = await exchange.fetch_ticker(pair)
                 self.latest_price = float(ticker['last'])
                 log(f"Price: ${self.latest_price:.2f}")
                 await asyncio.sleep(5)
@@ -75,8 +74,8 @@ class PriceFeed:
 
 # Main trading loop
 async def main():
-    price_feed = PriceFeed(client)
-    price_task = asyncio.create_task(price_feed.subscribe(PAIR))
+    price_feed = PriceFeed()
+    price_task = asyncio.create_task(price_feed.subscribe(PAIR, client))
 
     try:
         while True:
