@@ -1,7 +1,8 @@
-import ccxt
+import ccxt.async_support as ccxt
 import pandas as pd
 import time
 import os
+import asyncio
 from datetime import datetime
 
 # Load API credentials
@@ -9,11 +10,12 @@ api_key = os.getenv('COINBASE_API_KEY')
 api_secret = os.getenv('COINBASE_API_SECRET')
 api_passphrase = os.getenv('COINBASE_PASSPHRASE')
 
-# Initialize Coinbase Pro client
-client = ccxt.coinbasepro({
+# Initialize Coinbase client
+client = ccxt.coinbase({
     'apiKey': api_key,
     'secret': api_secret,
     'password': api_passphrase,
+    'enableRateLimit': True
 })
 
 # Trading parameters
@@ -30,8 +32,8 @@ def log(message):
     print(f"{datetime.now()}: {message}")
 
 # Get historical data for RSI
-def get_rsi(pair, period=RSI_PERIOD):
-    candles = client.fetch_ohlcv(pair, timeframe='5m', limit=period + 1)
+async def get_rsi(pair, period=RSI_PERIOD):
+    candles = await client.fetch_ohlcv(pair, timeframe='5m', limit=period + 1)
     df = pd.DataFrame(candles, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
     df['close'] = df['close'].astype(float)
     df = df.sort_values('time', ascending=True)
@@ -48,7 +50,7 @@ def get_rsi(pair, period=RSI_PERIOD):
 class PriceFeed:
     def __init__(self):
         self.latest_price = None
-        self.ws = client  # ccxt.async_support for WebSocket
+        self.ws = client
 
     async def subscribe(self, pair):
         while True:
@@ -72,7 +74,7 @@ async def main():
     while True:
         try:
             # Get RSI and price
-            rsi, _ = get_rsi(PAIR)
+            rsi, _ = await get_rsi(PAIR)
             price = price_feed.get_price()
             if not price:
                 log("Waiting for WebSocket price...")
@@ -81,7 +83,7 @@ async def main():
             log(f"Price: ${price:.2f} | RSI: {rsi:.2f}")
 
             # Get balances
-            balance = client.fetch_balance()
+            balance = await client.fetch_balance()
             btc_balance = float(balance['BTC']['free'])
             usd_balance = float(balance['USD']['free'])
             log(f"BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
@@ -90,7 +92,7 @@ async def main():
             for rsi_level in BUY_RSI:
                 if rsi <= rsi_level and usd_balance >= price * TRADE_AMOUNT:
                     buy_price = price * (1 - PRICE_TOLERANCE)
-                    order = client.create_limit_buy_order(
+                    order = await client.create_limit_buy_order(
                         symbol=PAIR,
                         amount=TRADE_AMOUNT,
                         price=buy_price
@@ -102,7 +104,7 @@ async def main():
             for rsi_level in SELL_RSI:
                 if rsi >= rsi_level and btc_balance >= TRADE_AMOUNT:
                     sell_price = price * (1 + PRICE_TOLERANCE)
-                    order = client.create_limit_sell_order(
+                    order = await client.create_limit_sell_order(
                         symbol=PAIR,
                         amount=TRADE_AMOUNT,
                         price=sell_price
@@ -118,5 +120,4 @@ async def main():
 
 # Run bot
 if __name__ == '__main__':
-    import asyncio
     asyncio.run(main())
