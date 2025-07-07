@@ -1,8 +1,7 @@
 import ccxt.async_support as ccxt
 import pandas as pd
-import time
-import os
 import asyncio
+import os
 from datetime import datetime
 
 # Load API credentials
@@ -19,7 +18,7 @@ client = ccxt.coinbase({
 })
 
 # Trading parameters
-PAIR = 'BTC/USD'  # ccxt uses BTC/USD
+PAIR = 'BTC/USD'
 RSI_PERIOD = 14
 BUY_RSI = [47, 42, 37, 32]
 SELL_RSI = [73, 77, 81, 85]
@@ -33,29 +32,33 @@ def log(message):
 
 # Get historical data for RSI
 async def get_rsi(pair, period=RSI_PERIOD):
-    candles = await client.fetch_ohlcv(pair, timeframe='5m', limit=period + 1)
-    df = pd.DataFrame(candles, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-    df['close'] = df['close'].astype(float)
-    df = df.sort_values('time', ascending=True)
-    deltas = df['close'].diff()
-    gains = deltas.where(deltas > 0, 0)
-    losses = -deltas.where(deltas < 0, 0)
-    avg_gain = gains.rolling(window=period).mean().iloc[-1]
-    avg_loss = losses.rolling(window=period).mean().iloc[-1]
-    rs = avg_gain / avg_loss if avg_loss != 0 else float('inf')
-    rsi = 100 - (100 / (1 + rs))
-    return rsi, df['close'].iloc[-1]
+    try:
+        candles = await client.fetch_ohlcv(pair, timeframe='5m', limit=period + 1)
+        df = pd.DataFrame(candles, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+        df['close'] = df['close'].astype(float)
+        df = df.sort_values('time', ascending=True)
+        deltas = df['close'].diff()
+        gains = deltas.where(deltas > 0, 0)
+        losses = -deltas.where(deltas < 0, 0)
+        avg_gain = gains.rolling(window=period).mean().iloc[-1]
+        avg_loss = losses.rolling(window=period).mean().iloc[-1]
+        rs = avg_gain / avg_loss if avg_loss != 0 else float('inf')
+        rsi = 100 - (100 / (1 + rs))
+        return rsi, df['close'].iloc[-1]
+    except Exception as e:
+        log(f"RSI Error: {str(e)}")
+        return None, None
 
 # WebSocket for real-time price
 class PriceFeed:
-    def __init__(self):
+    def __init__(self, exchange):
         self.latest_price = None
-        self.ws = client
+        self.exchange = exchange
 
     async def subscribe(self, pair):
         while True:
             try:
-                ticker = await self.ws.fetch_ticker(pair)
+                ticker = await self.exchange.fetch_ticker(pair)
                 self.latest_price = float(ticker['last'])
                 log(f"WebSocket Price: ${self.latest_price:.2f}")
                 await asyncio.sleep(5)
@@ -68,13 +71,17 @@ class PriceFeed:
 
 # Main trading loop
 async def main():
-    price_feed = PriceFeed()
+    price_feed = PriceFeed(client)
     asyncio.create_task(price_feed.subscribe(PAIR))
 
     while True:
         try:
             # Get RSI and price
             rsi, _ = await get_rsi(PAIR)
+            if rsi is None:
+                log("Skipping trade due to RSI fetch error")
+                await asyncio.sleep(5)
+                continue
             price = price_feed.get_price()
             if not price:
                 log("Waiting for WebSocket price...")
@@ -114,10 +121,17 @@ async def main():
 
         except Exception as e:
             log(f"Error: {str(e)}")
-            await asyncio.sleep(5)  # Retry after delay
+            await asyncio.sleep(5)
 
         await asyncio.sleep(SLEEP_INTERVAL)
 
+# Cleanup
+async def cleanup():
+    await client.close_connection()
+
 # Run bot
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        asyncio.run(cleanup())
