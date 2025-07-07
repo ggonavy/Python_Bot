@@ -54,13 +54,14 @@ class PriceFeed:
     def __init__(self, exchange):
         self.latest_price = None
         self.exchange = exchange
+        self.running = True
 
     async def subscribe(self, pair):
-        while True:
+        while self.running:
             try:
                 ticker = await self.exchange.fetch_ticker(pair)
                 self.latest_price = float(ticker['last'])
-                log(f"WebSocket Price: ${self.latest_price:.2f}")
+                log(f"Price: ${self.latest_price:.2f}")
                 await asyncio.sleep(5)
             except Exception as e:
                 log(f"WebSocket Error: {str(e)}")
@@ -69,26 +70,31 @@ class PriceFeed:
     def get_price(self):
         return self.latest_price
 
+    def stop(self):
+        self.running = False
+
 # Main trading loop
 async def main():
-    try:
-        price_feed = PriceFeed(client)
-        asyncio.create_task(price_feed.subscribe(PAIR))
+    price_feed = PriceFeed(client)
+    price_task = asyncio.create_task(price_feed.subscribe(PAIR))
 
+    try:
         while True:
             try:
-                # Get RSI and price
+                # Get RSI
                 rsi, _ = await get_rsi(PAIR)
                 if rsi is None:
                     log("Skipping trade due to RSI fetch error")
                     await asyncio.sleep(5)
                     continue
+
+                # Get price
                 price = price_feed.get_price()
                 if not price:
-                    log("Waiting for WebSocket price...")
+                    log("Waiting for price...")
                     await asyncio.sleep(5)
                     continue
-                log(f"Price: ${price:.2f} | RSI: {rsi:.2f}")
+                log(f"RSI: {rsi:.2f}")
 
                 # Get balances
                 balance = await client.fetch_balance()
@@ -127,6 +133,7 @@ async def main():
             await asyncio.sleep(SLEEP_INTERVAL)
 
     finally:
+        price_feed.stop()
         await client.close_connection()
 
 # Run bot
