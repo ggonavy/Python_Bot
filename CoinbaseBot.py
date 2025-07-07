@@ -1,7 +1,6 @@
 import coinbase_advanced_py
 from coinbase_advanced_py import RESTClient, WSClient
 import pandas as pd
-import pandas_ta as ta
 import time
 import os
 import asyncio
@@ -29,12 +28,18 @@ def log(message):
 
 # Get historical data for RSI
 def get_rsi(pair, period=RSI_PERIOD):
-    candles = client.get_candles(pair, granularity=300, limit=100)  # 5-min candles
+    candles = client.get_candles(pair, granularity=300, limit=period + 1)  # 5-min candles
     df = pd.DataFrame(candles['candles'], columns=['start', 'low', 'high', 'open', 'close', 'volume'])
     df['close'] = df['close'].astype(float)
     df = df.sort_values('start', ascending=True)
-    rsi = ta.rsi(df['close'], length=period)
-    return rsi.iloc[-1], df['close'].iloc[-1]
+    deltas = df['close'].diff()
+    gains = deltas.where(deltas > 0, 0)
+    losses = -deltas.where(deltas < 0, 0)
+    avg_gain = gains.rolling(window=period).mean().iloc[-1]
+    avg_loss = losses.rolling(window=period).mean().iloc[-1]
+    rs = avg_gain / avg_loss if avg_loss != 0 else float('inf')
+    rsi = 100 - (100 / (1 + rs))
+    return rsi, df['close'].iloc[-1]
 
 # WebSocket for real-time price
 class PriceFeed:
