@@ -1,6 +1,7 @@
-import coinbase
-from coinbase import CoinbaseClient
-from coinbase.websocket import WebsocketClient
+import coinbase.rest
+import coinbase.websocket
+from coinbase.rest import RESTClient
+from coinbase.websocket import WSClient
 import pandas as pd
 import time
 import os
@@ -13,7 +14,7 @@ api_secret = os.getenv('COINBASE_API_SECRET')
 api_passphrase = os.getenv('COINBASE_PASSPHRASE')
 
 # Initialize REST client
-client = CoinbaseClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
+client = RESTClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
 
 # Trading parameters
 PAIR = 'BTC-USD'
@@ -47,7 +48,7 @@ def get_rsi(pair, period=RSI_PERIOD):
 class PriceFeed:
     def __init__(self):
         self.latest_price = None
-        self.ws = WebsocketClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
+        self.ws = WSClient(api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase)
 
     async def subscribe(self, pair):
         await self.ws.subscribe(channels=['ticker'], product_ids=[pair])
