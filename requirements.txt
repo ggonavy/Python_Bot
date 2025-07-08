@@ -1,3 +1,5 @@
-ccxt
-pandas
-aiohttp
+coinbase-advanced-py==1.2.1
+pandas==2.1.4
+numpy==1.26.4
+flask==3.0.3
+# Remove cbpro or python-coinbase
