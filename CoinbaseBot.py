@@ -1,185 +1,94 @@
-import ccxt.async_support as ccxt
-import pandas as pd
-import asyncio
+from coinbase.rest import RESTClient
 import os
-import base64
-from datetime import datetime
-from aiohttp import web
+import pandas as pd
+from ta.momentum import RSIIndicator
+import time
+import logging
 
-# Load API credentials
-api_key = os.getenv('COINBASE_API_KEY')
-api_secret = os.getenv('COINBASE_API_SECRET')
-api_passphrase = os.getenv('COINBASE_PASSPHRASE')
-port = int(os.getenv('PORT', 8000))
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Validate credentials
-def validate_credentials():
-    if not all([api_key, api_secret, api_passphrase]):
-        log(f"Error: Missing API credentials - key: {bool(api_key)}, secret: {bool(api_secret)}, passphrase: {bool(api_passphrase)}")
-        exit(1)
-    try:
-        # Validate base64 secret
-        base64.b64decode(api_secret, validate=True)
-    except Exception as e:
-        log(f"Error: Invalid COINBASE_API_SECRET format: {str(e)} (secret length: {len(api_secret)})")
-        exit(1)
-    if not (30 <= len(api_key) <= 40):
-        log(f"Error: COINBASE_API_KEY length invalid ({len(api_key)})")
-        exit(1)
-    if not (40 <= len(api_secret) <= 50):
-        log(f"Error: COINBASE_API_SECRET length invalid ({len(api_secret)})")
-        exit(1)
+# Load credentials
+api_key = os.getenv("COINBASE_API_KEY")
+api_secret = os.getenv("COINBASE_API_SECRET")
 
-# Logging
-def log(message):
-    print(f"{datetime.now()}: {message}")
-
-# Initialize Coinbase client
-validate_credentials()
+# Initialize client
 try:
-    client = ccxt.coinbase({
-        'apiKey': api_key,
-        'secret': api_secret,
-        'password': api_passphrase,
-        'enableRateLimit': True
-    })
-    log("Coinbase client initialized successfully")
+    client = RESTClient(api_key=api_key, api_secret=api_secret)
+    logger.info("Coinbase client initialized")
 except Exception as e:
-    log(f"Error initializing client: {str(e)}")
+    logger.error(f"Failed to initialize client: {e}")
     exit(1)
 
-# Trading parameters
-PAIR = 'BTC/USD'
-RSI_PERIOD = 14
-BUY_RSI = [47, 42, 37, 32]
-SELL_RSI = [73, 77, 81, 85]
-SLEEP_INTERVAL = 60  # seconds
-TRADE_AMOUNT = 0.01675  # ~1/10th of 0.1675 BTC
-PRICE_TOLERANCE = 0.005  # 0.5% price slippage for limit orders
-
-# Get historical data for RSI
-async def get_rsi(pair, period=RSI_PERIOD):
+# Get market data (15m candles)
+def get_market_data(product_id="BTC-USD", limit=100):
     try:
-        candles = await client.fetch_ohlcv(pair, timeframe='5m', limit=period + 1)
-        df = pd.DataFrame(candles, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-        df['close'] = df['close'].astype(float)
-        df = df.sort_values('time', ascending=True)
-        deltas = df['close'].diff()
-        gains = deltas.where(deltas > 0, 0)
-        losses = -deltas.where(deltas < 0, 0)
-        avg_gain = gains.rolling(window=period).mean().iloc[-1]
-        avg_loss = losses.rolling(window=period).mean().iloc[-1]
-        rs = avg_gain / avg_loss if avg_loss != 0 else float('inf')
-        rsi = 100 - (100 / (1 + rs))
-        return rsi, df['close'].iloc[-1]
+        candles = client.get_candles(product_id=product_id, granularity=900)  # 15m
+        df = pd.DataFrame(candles["candles"], columns=["start", "low", "high", "open", "close", "volume"])
+        df["close"] = df["close"].astype(float)
+        df["start"] = pd.to_datetime(df["start"], unit="s")
+        logger.info(f"Fetched {len(df)} candles for {product_id}")
+        return df
     except Exception as e:
-        log(f"RSI Error: {str(e)}")
-        return None, None
+        logger.error(f"Error fetching market data: {e}")
+        return None
 
-# WebSocket for real-time price
-class PriceFeed:
-    def __init__(self):
-        self.latest_price = None
-        self.running = True
+# Trade logic
+def trade_logic():
+    df = get_market_data()
+    if df is None or len(df) < 14:
+        logger.warning("Not enough data for RSI calculation")
+        return
 
-    async def subscribe(self, pair, exchange):
-        while self.running:
-            try:
-                ticker = await exchange.fetch_ticker(pair)
-                self.latest_price = float(ticker['last'])
-                log(f"Price: ${self.latest_price:.2f}")
-                await asyncio.sleep(5)
-            except Exception as e:
-                log(f"Price Error: {str(e)}")
-                await asyncio.sleep(5)
-
-    def get_price(self):
-        return self.latest_price
-
-    def stop(self):
-        self.running = False
-
-# Minimal HTTP server for Render
-async def handle_health_check(request):
-    return web.Response(text="Bot is running")
-
-async def start_server():
+    # Calculate RSI
     try:
-        app = web.Application()
-        app.add_routes([web.get('/', handle_health_check)])
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', port)
-        await site.start()
-        log(f"HTTP server started on port {port}")
+        rsi = RSIIndicator(df["close"], window=14).rsi()
+        latest_rsi = rsi.iloc[-1]
+        logger.info(f"Latest RSI: {latest_rsi}")
     except Exception as e:
-        log(f"HTTP Server Error: {str(e)}")
-        exit(1)
+        logger.error(f"Error calculating RSI: {e}")
+        return
 
-# Main trading loop
-async def main():
-    price_feed = PriceFeed()
-    price_task = asyncio.create_task(price_feed.subscribe(PAIR, client))
-    server_task = asyncio.create_task(start_server())
-
+    # Get account balances
     try:
-        while True:
-            try:
-                # Get RSI
-                rsi, _ = await get_rsi(PAIR)
-                if rsi is None:
-                    log("Skipping trade due to RSI fetch error")
-                    await asyncio.sleep(5)
-                    continue
+        accounts = client.get_accounts()
+        btc_account = next((acc for acc in accounts["accounts"] if acc["currency"] == "BTC"), None)
+        usd_account = next((acc for acc in accounts["accounts"] if acc["currency"] == "USD"), None)
+        btc_balance = float(btc_account["available_balance"]["value"]) if btc_account else 0
+        usd_balance = float(usd_account["available_balance"]["value"]) if usd_account else 0
+        logger.info(f"BTC balance: {btc_balance}, USD balance: {usd_balance}")
+    except Exception as e:
+        logger.error(f"Error fetching balances: {e}")
+        return
 
-                # Get price
-                price = price_feed.get_price()
-                if not price:
-                    log("Waiting for price...")
-                    await asyncio.sleep(5)
-                    continue
-                log(f"RSI: {rsi:.2f}")
+    # Trade parameters
+    trade_size_btc = 0.1675  # Your trade size
+    price = float(df["close"].iloc[-1])
+    buy_signals = [47, 42, 37, 32]  # Your buy thresholds
+    sell_signals = [73, 77, 81, 85]  # Your sell thresholds
 
-                # Get balances
-                balance = await client.fetch_balance()
-                btc_balance = float(balance.get('BTC', {}).get('free', 0))
-                usd_balance = float(balance.get('USD', {}).get('free', 0))
-                log(f"BTC: {btc_balance:.6f} | USD: ${usd_balance:.2f}")
+    # Trading logic
+    if any(latest_rsi <= signal for signal in buy_signals) and usd_balance > trade_size_btc * price:
+        try:
+            order = client.market_order_buy(product_id="BTC-USD", quote_size=f"{trade_size_btc * price:.2f}")
+            logger.info(f"Buy order placed: {order}")
+        except Exception as e:
+            logger.error(f"Buy order error: {e}")
+    elif any(latest_rsi >= signal for signal in sell_signals) and btc_balance >= trade_size_btc:
+        try:
+            order = client.market_order_sell(product_id="BTC-USD", base_size=f"{trade_size_btc:.8f}")
+            logger.info(f"Sell order placed: {order}")
+        except Exception as e:
+            logger.error(f"Sell order error: {e}")
 
-                # Buy logic (limit order)
-                for rsi_level in BUY_RSI:
-                    if rsi <= rsi_level and usd_balance >= price * TRADE_AMOUNT:
-                        buy_price = price * (1 - PRICE_TOLERANCE)
-                        order = await client.create_limit_buy_order(
-                            symbol=PAIR,
-                            amount=TRADE_AMOUNT,
-                            price=buy_price
-                        )
-                        log(f"Buy {TRADE_AMOUNT} BTC at ${buy_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
-                        break
-
-                # Sell logic (limit order)
-                for rsi_level in SELL_RSI:
-                    if rsi >= rsi_level and btc_balance >= TRADE_AMOUNT:
-                        sell_price = price * (1 + PRICE_TOLERANCE)
-                        order = await client.create_limit_sell_order(
-                            symbol=PAIR,
-                            amount=TRADE_AMOUNT,
-                            price=sell_price
-                        )
-                        log(f"Sell {TRADE_AMOUNT} BTC at ${sell_price:.2f} (RSI: {rsi:.2f}) | Order: {order['id']}")
-                        break
-
-            except Exception as e:
-                log(f"Error: {str(e)}")
-                await asyncio.sleep(5)
-
-            await asyncio.sleep(SLEEP_INTERVAL)
-
-    finally:
-        price_feed.stop()
-        await client.close_connection()
-
-# Run bot and server
-if __name__ == '__main__':
-    asyncio.run(main())
+# Run bot
+if __name__ == "__main__":
+    while True:
+        try:
+            trade_logic()
+            logger.info("Sleeping for 15 minutes")
+            time.sleep(900)  # 15m interval
+        except Exception as e:
+            logger.error(f"Main loop error: {e}")
+            time.sleep(60)  # Wait 1m before retrying
