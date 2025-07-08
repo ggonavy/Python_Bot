@@ -19,14 +19,17 @@ app = Flask(__name__)
 api_key = os.getenv("COINBASE_API_KEY")
 api_secret = os.getenv("COINBASE_API_SECRET")
 
+client = None
 try:
     client = RESTClient(api_key=api_key, api_secret=api_secret)
     logger.info("Coinbase client initialized")
 except Exception as e:
     logger.error(f"Failed to initialize client: {e}")
-    exit(1)
 
 def get_market_data(product_id="BTC-USD", limit=100):
+    if client is None:
+        logger.error("No Coinbase client available")
+        return None
     try:
         end = int(datetime.now().timestamp())
         start = end - (limit * 900)
