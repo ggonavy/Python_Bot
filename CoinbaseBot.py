@@ -93,8 +93,12 @@ def trade_logic():
         logger.info("Sleeping for 15 minutes")
         time.sleep(900)
 
-# Flask route for health check
+# Flask routes
 @app.route('/')
+def index():
+    return "Bot is running", 200
+
+@app.route('/health')
 def health():
     return "Bot is running", 200
 
