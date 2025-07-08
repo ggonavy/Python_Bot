@@ -5,7 +5,7 @@ from ta.momentum import RSIIndicator
 import time
 import logging
 
-# Set up logging
+# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
