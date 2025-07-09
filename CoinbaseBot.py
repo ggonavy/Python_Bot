@@ -25,6 +25,10 @@ api_secret = os.getenv("COINBASE_API_SECRET")
 
 client = None
 try:
+    logger.info(f"API Key: {api_key[:8] if api_key else 'None'}...")  # Debug first 8 chars
+    logger.info(f"API Secret: {api_secret[:20] if api_secret else 'None'}...")  # Debug first 20 chars
+    if not api_key or not api_secret:
+        raise ValueError("Missing COINBASE_API_KEY or COINBASE_API_SECRET")
     client = RESTClient(api_key=api_key, api_secret=api_secret)
     logger.info("Coinbase client initialized")
     # Test a simple API call to debug auth
