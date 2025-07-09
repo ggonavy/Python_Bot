@@ -1,5 +1,4 @@
 from coinbase.rest import RESTClient
-from coinbase.rest.candles import Granularity
 import os
 import pandas as pd
 from ta.momentum import RSIIndicator
@@ -48,7 +47,7 @@ def get_market_data(product_id="BTC-USD", limit=100):
     try:
         end = int(datetime.now().timestamp())
         start = end - (limit * 900)
-        candles = client.get_candles(product_id=product_id, granularity=Granularity.FIFTEEN_MINUTE, start=str(start), end=str(end))
+        candles = client.get_candles(product_id=product_id, granularity="900", start=str(start), end=str(end))
         if not candles or "candles" not in candles:
             logger.error("No candles returned")
             return None
