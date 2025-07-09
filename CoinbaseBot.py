@@ -7,6 +7,10 @@ import logging
 from datetime import datetime, timedelta
 from flask import Flask
 import threading
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
