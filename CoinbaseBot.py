@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Coinbase client
-api_key_name = os.getenv("COINBASE_API_KEY_NAME")
-api_private_key = os.getenv("COINBASE_PRIVATE_KEY")
+api_key = os.getenv("COINBASE_API_KEY")
+api_secret = os.getenv("COINBASE_API_SECRET")
 
 client = None
 try:
-    client = RESTClient(api_key=api_key_name, api_secret=api_private_key)
+    client = RESTClient(api_key=api_key, api_secret=api_secret)
     logger.info("Coinbase client initialized")
 except Exception as e:
     logger.error(f"Failed to initialize client: {e}")
