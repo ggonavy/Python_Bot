@@ -17,12 +17,10 @@ app = Flask(__name__)
 
 # Coinbase client
 api_key_name = os.getenv("COINBASE_API_KEY_NAME")
-pem_file = os.getenv("COINBASE_PEM_PATH", "private-key.pem")  # Adjust default path if needed
+private_key = os.getenv("COINBASE_PRIVATE_KEY")
 
 client = None
 try:
-    with open(pem_file, "r") as f:
-        private_key = f.read()
     client = RESTClient(api_key=api_key_name, private_key=private_key)
     logger.info("Coinbase client initialized")
 except Exception as e:
@@ -100,7 +98,7 @@ def trade_logic():
                 order = client.market_order_sell(product_id="BTC-USD", base_size=f"{trade_size_btc:.8f}")
                 logger.info(f"Sell order placed: {order}")
             except Exception as e:
-                logger.error(f"Buy order error: {e}")
+                logger.error(f"Sell order error: {e}")
 
         logger.info("Sleeping for 15 minutes")
         time.sleep(900)
