@@ -25,7 +25,7 @@ api_private_key = os.getenv("COINBASE_PRIVATE_KEY")
 
 client = None
 try:
-    client = RESTClient(key=api_key_name, secret=api_private_key)
+    client = RESTClient(api_key=api_key_name, api_secret=api_private_key)
     logger.info("Coinbase client initialized")
 except Exception as e:
     logger.error(f"Failed to initialize client: {e}")
