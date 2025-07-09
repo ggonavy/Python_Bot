@@ -16,12 +16,14 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Coinbase client
-api_key = os.getenv("COINBASE_API_KEY")
-api_secret = os.getenv("COINBASE_API_SECRET")
+api_key_name = os.getenv("COINBASE_API_KEY_NAME")
+pem_file = os.getenv("COINBASE_PEM_PATH", "private-key.pem")  # Adjust default path if needed
 
 client = None
 try:
-    client = RESTClient(api_key=api_key, api_secret=api_secret)
+    with open(pem_file, "r") as f:
+        private_key = f.read()
+    client = RESTClient(api_key=api_key_name, private_key=private_key)
     logger.info("Coinbase client initialized")
 except Exception as e:
     logger.error(f"Failed to initialize client: {e}")
@@ -34,6 +36,9 @@ def get_market_data(product_id="BTC-USD", limit=100):
         end = int(datetime.now().timestamp())
         start = end - (limit * 900)
         candles = client.get_candles(product_id=product_id, granularity=900, start=str(start), end=str(end))
+        if not candles or "candles" not in candles:
+            logger.error("No candles returned")
+            return None
         df = pd.DataFrame(candles["candles"], columns=["start", "low", "high", "open", "close", "volume"])
         df["close"] = df["close"].astype(float)
         df["start"] = pd.to_datetime(df["start"], unit="s")
@@ -41,6 +46,9 @@ def get_market_data(product_id="BTC-USD", limit=100):
         return df
     except Exception as e:
         logger.error(f"Error fetching market data: {e}")
+        if "429" in str(e):
+            logger.warning("Rate limit hit, sleeping 10s")
+            time.sleep(10)
         return None
 
 def trade_logic():
@@ -64,8 +72,12 @@ def trade_logic():
             accounts = client.get_accounts()
             btc_account = next((acc for acc in accounts["accounts"] if acc["currency"] == "BTC"), None)
             usd_account = next((acc for acc in accounts["accounts"] if acc["currency"] == "USD"), None)
-            btc_balance = float(btc_account["available_balance"]["value"]) if btc_account else 0
-            usd_balance = float(usd_account["available_balance"]["value"]) if usd_account else 0
+            if not btc_account or not usd_account:
+                logger.error("BTC or USD account not found")
+                time.sleep(60)
+                continue
+            btc_balance = float(btc_account["available_balance"]["value"])
+            usd_balance = float(usd_account["available_balance"]["value"])
             logger.info(f"BTC balance: {btc_balance}, USD balance: {usd_balance}")
         except Exception as e:
             logger.error(f"Error fetching balances: {e}")
@@ -88,7 +100,7 @@ def trade_logic():
                 order = client.market_order_sell(product_id="BTC-USD", base_size=f"{trade_size_btc:.8f}")
                 logger.info(f"Sell order placed: {order}")
             except Exception as e:
-                logger.error(f"Sell order error: {e}")
+                logger.error(f"Buy order error: {e}")
 
         logger.info("Sleeping for 15 minutes")
         time.sleep(900)
