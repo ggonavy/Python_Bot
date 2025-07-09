@@ -27,6 +27,12 @@ client = None
 try:
     client = RESTClient(api_key=api_key, api_secret=api_secret)
     logger.info("Coinbase client initialized")
+    # Test a simple API call to debug auth
+    try:
+        products = client.get_products()
+        logger.info(f"Successfully fetched products: {products[:50]}")
+    except Exception as e:
+        logger.error(f"Test API call failed: {e}")
 except Exception as e:
     logger.error(f"Failed to initialize client: {e}")
 
