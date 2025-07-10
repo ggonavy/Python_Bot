@@ -37,7 +37,7 @@ def fetch_ohlcv(symbol, timeframe='1h', limit=100):
     """Fetch OHLCV data from Coinbase."""
     try:
         candles = client.get_candles(
-            product_id=symbol.replace('/', '-'),
+            product_id=symbol,
             granularity=3600,  # 1 hour in seconds
             limit=limit
         )
