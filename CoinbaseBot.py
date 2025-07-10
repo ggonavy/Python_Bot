@@ -1,5 +1,5 @@
 from flask import Flask, jsonify
-from coinbase_advanced.client import CoinbaseAdvancedTradeClient
+from coinbase_advanced_trade.client import CoinbaseAdvancedTradeClient
 import os
 import time
 import logging
