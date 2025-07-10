@@ -1,9 +1,14 @@
 from flask import Flask, jsonify
-import ccxt
+from coinbaseadvanced.client import CoinbaseAdvancedTradeClient
 import os
 import time
 import logging
 import pandas as pd
+from ta.momentum import RSIIndicator
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -16,44 +21,54 @@ API_KEY = os.getenv('COINBASE_API_KEY')
 API_SECRET = os.getenv('COINBASE_API_SECRET')
 API_PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
 
-# Initialize Coinbase Advanced Trade exchange
-exchange = ccxt.coinbase({
-    'apiKey': API_KEY,
-    'secret': API_SECRET,
-    'password': API_PASSPHRASE,
-    'enableRateLimit': True
-})
+# Initialize Coinbase Advanced Trade client
+client = CoinbaseAdvancedTradeClient(
+    api_key=API_KEY,
+    api_secret=API_SECRET,
+    passphrase=API_PASSPHRASE
+)
 
 # Health check endpoint
 @app.route('/health')
 def health():
     return jsonify({"status": "healthy"}), 200
 
-def calculate_rsi(data, period=14):
-    delta = data['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
+def fetch_ohlcv(symbol, timeframe='1h', limit=100):
+    """Fetch OHLCV data from Coinbase."""
+    try:
+        candles = client.get_candles(
+            product_id=symbol.replace('/', '-'),
+            granularity=3600,  # 1 hour in seconds
+            limit=limit
+        )
+        df = pd.DataFrame(candles, columns=['timestamp', 'low', 'high', 'open', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+    except Exception as e:
+        logger.error(f"Error fetching OHLCV for {symbol}: {str(e)}")
+        return None
 
 def trading_bot():
-    symbols = ['BTC/USD', 'ETH/USD']
+    symbols = ['BTC-USD', 'ETH-USD']
     timeframe = '1h'
     rsi_period = 14
     buy_ladder = [47, 42, 37, 32]
     sell_ladder = [73, 77, 81, 85]
     btc_amount = 0.1675  # BTC amount to trade
-    eth_amount = 0.5     # ETH amount to trade (adjust based on portfolio)
+    eth_amount = 0.5     # ETH amount to trade
 
     while True:
         for symbol in symbols:
             try:
                 # Fetch OHLCV data
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df = fetch_ohlcv(symbol, timeframe)
+                if df is None or df.empty:
+                    logger.error(f"No data for {symbol}, skipping...")
+                    continue
                 
-                # Calculate RSI
-                df['rsi'] = calculate_rsi(df, rsi_period)
+                # Calculate RSI using ta
+                rsi = RSIIndicator(close=df['close'], window=rsi_period)
+                df['rsi'] = rsi.rsi()
                 
                 current_rsi = df['rsi'].iloc[-1]
                 current_price = df['close'].iloc[-1]
@@ -61,18 +76,26 @@ def trading_bot():
                 logger.info(f"{symbol} | Price: {current_price:.2f} | RSI: {current_rsi:.2f}")
                 
                 # Trading logic
-                amount = btc_amount if symbol == 'BTC/USD' else eth_amount
+                amount = btc_amount if symbol == 'BTC-USD' else eth_amount
                 
                 for buy_rsi in buy_ladder:
                     if current_rsi <= buy_rsi:
                         logger.info(f"{symbol} RSI {current_rsi:.2f} <= {buy_rsi}, buying...")
-                        exchange.create_market_buy_order(symbol, amount)
+                        client.create_market_order(
+                            product_id=symbol,
+                            side='buy',
+                            size=str(amount)
+                        )
                         break
                 
                 for sell_rsi in sell_ladder:
                     if current_rsi >= sell_rsi:
                         logger.info(f"{symbol} RSI {current_rsi:.2f} >= {sell_rsi}, selling...")
-                        exchange.create_market_sell_order(symbol, amount)
+                        client.create_market_order(
+                            product_id=symbol,
+                            side='sell',
+                            size=str(amount)
+                        )
                         break
                 
             except Exception as e:
