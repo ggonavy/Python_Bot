@@ -68,3 +68,41 @@ def trading_bot():
                     continue
                 
                 # Calculate RSI using ta
+                rsi = RSIIndicator(close=df['close'], window=rsi_period)
+                df['rsi'] = rsi.rsi()
+                
+                current_rsi = df['rsi'].iloc[-1]
+                current_price = df['close'].iloc[-1]
+                
+                logger.info(f"{symbol} | Price: {current_price:.2f} | RSI: {current_rsi:.2f}")
+                
+                # Trading logic
+                amount = btc_amount if symbol == 'BTC-USD' else eth_amount
+                
+                for buy_rsi in buy_ladder:
+                    if current_rsi <= buy_rsi:
+                        logger.info(f"{symbol} RSI {current_rsi:.2f} <= {buy_rsi}, buying...")
+                        client.place_market_order(
+                            product_id=symbol,
+                            side='BUY',
+                            base_size=str(amount)
+                        )
+                        break
+                
+                for sell_rsi in sell_ladder:
+                    if current_rsi >= sell_rsi:
+                        logger.info(f"{symbol} RSI {current_rsi:.2f} >= {sell_rsi}, selling...")
+                        client.place_market_order(
+                            product_id=symbol,
+                            side='SELL',
+                            base_size=str(amount)
+                        )
+                        break
+                
+            except Exception as e:
+                logger.error(f"Error in trading loop for {symbol}: {str(e)}")
+                
+        time.sleep(3600)  # Wait for 1 hour
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
