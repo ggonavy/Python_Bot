@@ -1,5 +1,5 @@
 from flask import Flask, jsonify
-from coinbaseadvanced.client import CoinbaseAdvancedTradeClient
+from coinbase_advanced.client import CoinbaseAdvancedTradeClient
 import os
 import time
 import logging
@@ -24,7 +24,7 @@ API_PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
 # Initialize Coinbase Advanced Trade client
 client = CoinbaseAdvancedTradeClient(
     api_key=API_KEY,
-    api_secret=API_SECRET,
+    secret_key=API_SECRET,
     passphrase=API_PASSPHRASE
 )
 
@@ -38,9 +38,10 @@ def fetch_ohlcv(symbol, timeframe='1h', limit=100):
     try:
         candles = client.get_candles(
             product_id=symbol,
-            granularity=3600,  # 1 hour in seconds
+            granularity='ONE_HOUR',  # 1 hour
             limit=limit
         )
+        # Convert candles to DataFrame
         df = pd.DataFrame(candles, columns=['timestamp', 'low', 'high', 'open', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
         return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
@@ -81,20 +82,20 @@ def trading_bot():
                 for buy_rsi in buy_ladder:
                     if current_rsi <= buy_rsi:
                         logger.info(f"{symbol} RSI {current_rsi:.2f} <= {buy_rsi}, buying...")
-                        client.create_market_order(
+                        client.place_market_order(
                             product_id=symbol,
-                            side='buy',
-                            size=str(amount)
+                            side='BUY',
+                            base_size=str(amount)
                         )
                         break
                 
                 for sell_rsi in sell_ladder:
                     if current_rsi >= sell_rsi:
                         logger.info(f"{symbol} RSI {current_rsi:.2f} >= {sell_rsi}, selling...")
-                        client.create_market_order(
+                        client.place_market_order(
                             product_id=symbol,
-                            side='sell',
-                            size=str(amount)
+                            side='SELL',
+                            base_size=str(amount)
                         )
                         break
                 
