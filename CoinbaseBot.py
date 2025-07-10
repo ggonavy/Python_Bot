@@ -1,11 +1,18 @@
 from flask import Flask, jsonify
-from coinbase_advanced.client import CoinbaseAdvancedTradeClient
+from coinbase_advanced_trade.client import CoinbaseAdvancedTradeClient
 import os
 import time
 import logging
 import pandas as pd
 from ta.momentum import RSIIndicator
 from dotenv import load_dotenv
+
+# Debug: Verify package installation
+try:
+    import coinbase_advanced_trade
+    print("coinbase_advanced_trade package is installed successfully")
+except ImportError as e:
+    print(f"Failed to import coinbase_advanced_trade: {str(e)}")
 
 # Load environment variables
 load_dotenv()
