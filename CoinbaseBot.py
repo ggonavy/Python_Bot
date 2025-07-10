@@ -1,96 +1,150 @@
-from flask import Flask, jsonify
-import ccxt
 import os
 import time
-import logging
+import ccxt
 import pandas as pd
+import logging
+from flask import Flask, jsonify
 from ta.momentum import RSIIndicator
-from dotenv import load_dotenv
+from threading import Thread
 
-# Load environment variables
-load_dotenv()
-
-app = Flask(__name__)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Coinbase API credentials
-API_KEY = os.getenv('COINBASE_API_KEY')
-API_SECRET = os.getenv('COINBASE_API_SECRET')
-API_PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
+# Flask app for Render health checks
+app = Flask(__name__)
 
-# Initialize Coinbase Advanced Trade client
-client = ccxt.coinbase({
-    'apiKey': API_KEY,
-    'secret': API_SECRET,
-    'password': API_PASSPHRASE,
-    'enableRateLimit': True
-})
-
-# Health check endpoint
 @app.route('/health')
 def health():
     return jsonify({"status": "healthy"}), 200
 
-def fetch_ohlcv(symbol, timeframe='1h', limit=100):
-    """Fetch OHLCV data from Coinbase."""
+# Coinbase API setup
+def init_exchange():
     try:
-        candles = client.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+        api_key = os.getenv('COINBASE_API_KEY')
+        api_secret = os.getenv('COINBASE_API_SECRET')
+        passphrase = os.getenv('COINBASE_PASSPHRASE')
+        if not all([api_key, api_secret, passphrase]):
+            logger.error("Missing API credentials")
+            raise ValueError("API credentials not set")
+        exchange = ccxt.coinbase({
+            'apiKey': api_key,
+            'secret': api_secret,
+            'password': passphrase,
+            'enableRateLimit': True
+        })
+        logger.info("Coinbase exchange initialized")
+        return exchange
     except Exception as e:
-        logger.error(f"Error fetching OHLCV for {symbol}: {str(e)}")
+        logger.error(f"Failed to initialize exchange: {str(e)}")
+        raise
+
+# Fetch OHLCV data
+def fetch_ohlcv(exchange, symbol, timeframe='15m', limit=100):
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        logger.info(f"Fetched {len(df)} OHLCV candles for {symbol}")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to fetch OHLCV for {symbol}: {str(e)}")
         return None
 
-def trading_bot():
-    symbols = ['BTC/USD', 'ETH/USD']
-    timeframe = '1h'
-    rsi_period = 14
-    buy_ladder = [47, 42, 37, 32]
-    sell_ladder = [73, 77, 81, 85]
-    btc_amount = 0.1675  # BTC amount to trade
-    eth_amount = 0.5     # ETH amount to trade
+# Calculate RSI
+def calculate_rsi(df, period=14):
+    try:
+        rsi = RSIIndicator(df['close'], period).rsi()
+        logger.info(f"Calculated RSI for {df['timestamp'].iloc[-1]}: {rsi.iloc[-1]:.2f}")
+        return rsi
+    except Exception as e:
+        logger.error(f"Failed to calculate RSI: {str(e)}")
+        return None
 
+# Trading logic for a single symbol
+def trading_logic(exchange, symbol, fiat_limit, rsi_levels):
+    try:
+        # Fetch market data
+        df = fetch_ohlcv(exchange, symbol)
+        if df is None or df.empty:
+            logger.error(f"No OHLCV data for {symbol}, skipping trade")
+            return False
+
+        # Calculate RSI
+        rsi = calculate_rsi(df)
+        if rsi is None:
+            logger.error(f"No RSI data for {symbol}, skipping trade")
+            return False
+        current_rsi = rsi.iloc[-1]
+        current_price = df['close'].iloc[-1]
+
+        # Get account balance
+        balance = exchange.fetch_balance()
+        base = symbol.split('/')[0]  # BTC or ETH
+        quote = symbol.split('/')[1]  # USD
+        usd_balance = balance[quote]['free'] if quote in balance else 0
+        asset_balance = balance[base]['free'] if base in balance else 0
+        logger.info(f"{symbol} - USD: {usd_balance:.2f}, {base}: {asset_balance:.6f}, RSI: {current_rsi:.2f}, Price: {current_price:.2f}")
+
+        # Check RSI buy/sell levels
+        for rsi_level, amount in rsi_levels['buy'].items():
+            amount_usd = amount * current_price
+            if current_rsi <= rsi_level and usd_balance >= amount_usd and usd_balance >= fiat_limit:
+                try:
+                    order = exchange.create_market_buy_order(symbol, amount)
+                    logger.info(f"Buy {amount:.6f} {base} at {current_price:.2f} (RSI: {current_rsi:.2f})")
+                    return True
+                except Exception as e:
+                    logger.error(f"Buy order failed for {symbol} at RSI {rsi_level}: {str(e)}")
+        for rsi_level, amount in rsi_levels['sell'].items():
+            if current_rsi >= rsi_level and asset_balance >= amount:
+                try:
+                    order = exchange.create_market_sell_order(symbol, amount)
+                    logger.info(f"Sell {amount:.6f} {base} at {current_price:.2f} (RSI: {current_rsi:.2f})")
+                    return True
+                except Exception as e:
+                    logger.error(f"Sell order failed for {symbol} at RSI {rsi_level}: {str(e)}")
+        logger.info(f"No trade for {symbol}: RSI {current_rsi:.2f} not at trigger level")
+        return False
+    except Exception as e:
+        logger.error(f"Trading logic failed for {symbol}: {str(e)}")
+        return False
+
+# Main trading loop
+def trading_bot():
+    exchange = init_exchange()
+    configs = [
+        {
+            'symbol': 'BTC/USD',
+            'fiat_limit': 3060,  # Minimum USD for smallest buy
+            'rsi_levels': {
+                'buy': {47: 0.02479, 42: 0.03305, 37: 0.04131, 32: 0.06611},
+                'sell': {73: 0.02479, 77: 0.03305, 81: 0.04131, 85: 0.06611}
+            }
+        },
+        {
+            'symbol': 'ETH/USD',
+            'fiat_limit': 540,  # Minimum USD for smallest buy
+            'rsi_levels': {
+                'buy': {47: 0.12000, 42: 0.16000, 37: 0.20000, 32: 0.32000},
+                'sell': {73: 0.12000, 77: 0.16000, 81: 0.20000, 85: 0.32000}
+            }
+        }
+    ]
     while True:
-        for symbol in symbols:
-            try:
-                # Fetch OHLCV data
-                df = fetch_ohlcv(symbol, timeframe)
-                if df is None or df.empty:
-                    logger.error(f"No data for {symbol}, skipping...")
-                    continue
-                
-                # Calculate RSI using ta
-                rsi = RSIIndicator(close=df['close'], window=rsi_period)
-                df['rsi'] = rsi.rsi()
-                
-                current_rsi = df['rsi'].iloc[-1]
-                current_price = df['close'].iloc[-1]
-                
-                logger.info(f"{symbol} | Price: {current_price:.2f} | RSI: {current_rsi:.2f}")
-                
-                # Trading logic
-                amount = btc_amount if symbol == 'BTC/USD' else eth_amount
-                
-                for buy_rsi in buy_ladder:
-                    if current_rsi <= buy_rsi:
-                        logger.info(f"{symbol} RSI {current_rsi:.2f} <= {buy_rsi}, buying...")
-                        client.create_market_buy_order(symbol, amount)
-                        break
-                
-                for sell_rsi in sell_ladder:
-                    if current_rsi >= sell_rsi:
-                        logger.info(f"{symbol} RSI {current_rsi:.2f} >= {sell_rsi}, selling...")
-                        client.create_market_sell_order(symbol, amount)
-                        break
-                
-            except Exception as e:
-                logger.error(f"Error in trading loop for {symbol}: {str(e)}")
-                
-        time.sleep(3600)  # Wait for 1 hour
+        try:
+            # Prioritize BTC, allow ETH if no BTC trade
+            btc_traded = trading_logic(exchange, configs[0]['symbol'], configs[0]['fiat_limit'], configs[0]['rsi_levels'])
+            if not btc_traded:
+                trading_logic(exchange, configs[1]['symbol'], configs[1]['fiat_limit'], configs[1]['rsi_levels'])
+            logger.info("Sleeping for 60 seconds")
+            time.sleep(60)
+        except Exception as e:
+            logger.error(f"Main loop error: {str(e)}")
+            time.sleep(60)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    # Start trading bot in a separate thread
+    Thread(target=trading_bot).start()
+    # Run Flask app
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)), debug=False)
