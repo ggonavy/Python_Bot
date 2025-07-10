@@ -1,4 +1,20 @@
+# Python
 *.pyc
 __pycache__/
-trade_log.txt
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
 .env
+*.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Misc
+*.log
+*.swp
+.DS_Store
