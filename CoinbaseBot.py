@@ -1,55 +1,97 @@
-import os
 import ccxt
-import logging
-from flask import Flask
-import threading
 import time
+import os
+import hmac
+import hashlib
+import base64
+from datetime import datetime
 
-app = Flask(__name__)
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+# Environment variables
+API_KEY = os.getenv('COINBASE_API_KEY')
+API_SECRET = os.getenv('COINBASE_API_SECRET')
+PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
 
-def init_exchange():
-    logger.debug("Initializing Coinbase exchange")
-    exchange = ccxt.coinbase({
-        'apiKey': os.getenv('COINBASE_API_KEY'),
-        'secret': os.getenv('COINBASE_API_SECRET'),
-    })
-    exchange.urls['api'] = {
-        'v2': 'https://api.coinbase.com/v2/',
-        'public': 'https://api.coinbase.com/v2/',
-    }
-    logger.debug(f"Exchange URLs: {exchange.urls}")
-    return exchange
+# Initialize exchange
+exchange = ccxt.coinbase({
+    'apiKey': API_KEY,
+    'secret': API_SECRET,
+    'password': PASSPHRASE,
+    'enableRateLimit': True
+})
 
-def custom_sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
-    request = path
-    base_url = self.urls['api'][api] if isinstance(self.urls['api'][api], str) else self.urls['api'][api][0]
-    return {
-        'url': base_url + request,
-        'method': method,
-        'body': body,
-        'headers': headers
-    }
+# Trading parameters
+SYMBOL = 'BTC-USD'
+QUOTE_AMOUNT = 0.1675 * 0.8  # 80% of 0.1675 BTC
+ETH_QUOTE_AMOUNT = 0.1675 * 0.2  # 20% in ETH
+RSI_BUY_LEVELS = [47, 42, 37, 32]
+RSI_SELL_LEVELS = [73, 77, 81, 85]
+POSITION_SIZES = [0.15, 0.20, 0.25, 0.40]  # % of quote amount
+TIMEFRAME = '1h'
+RSI_PERIOD = 14
 
-def trading_bot():
+def calculate_rsi(data, periods=14):
+    close_prices = [float(candle[4]) for candle in data]
+    gains = []
+    losses = []
+    for i in range(1, len(close_prices)):
+        diff = close_prices[i] - close_prices[i-1]
+        if diff >= 0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
+    
+    avg_gain = sum(gains[:periods]) / periods
+    avg_loss = sum(losses[:periods]) / periods
+    
+    for i in range(periods, len(gains)):
+        avg_gain = (avg_gain * (periods - 1) + gains[i]) / periods
+        avg_loss = (avg_loss * (periods - 1) + losses[i]) / periods
+    
+    rs = avg_gain / avg_loss if avg_loss != 0 else float('inf')
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def main():
+    print(f"Starting bot at {datetime.now()}")
     while True:
         try:
-            exchange = init_exchange()
-            exchange.load_markets()
-            logger.info("Exchange markets loaded successfully")
-            # Add your trading logic here
-            time.sleep(60)  # Adjust as needed
-        except Exception as e:
-            logger.error(f"Error in trading bot: {str(e)}")
-            time.sleep(10)
+            # Fetch OHLCV data
+            ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=RSI_PERIOD + 1)
+            rsi = calculate_rsi(ohlcv, RSI_PERIOD)
+            print(f"RSI: {rsi:.2f}")
 
-@app.route('/health')
-def health():
-    return {"status": "healthy"}
+            # Get current price and balance
+            ticker = exchange.fetch_ticker(SYMBOL)
+            price = ticker['last']
+            balance = exchange.fetch_balance()
+            usd_balance = balance['USD']['free']
+            btc_balance = balance['BTC']['free']
+
+            # Trading logic
+            for i, (buy_level, sell_level, size) in enumerate(zip(RSI_BUY_LEVELS, RSI_SELL_LEVELS, POSITION_SIZES)):
+                trade_amount = QUOTE_AMOUNT * size / price
+                if rsi <= buy_level and usd_balance >= QUOTE_AMOUNT * size:
+                    print(f"Buying {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
+                    exchange.create_market_buy_order(SYMBOL, trade_amount)
+                elif rsi >= sell_level and btc_balance >= trade_amount:
+                    print(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
+                    exchange.create_market_sell_order(SYMBOL, trade_amount)
+
+            # ETH allocation (simplified)
+            eth_symbol = 'ETH-USD'
+            eth_ticker = exchange.fetch_ticker(eth_symbol)
+            eth_price = eth_ticker['last']
+            eth_amount = ETH_QUOTE_AMOUNT / eth_price
+            if rsi <= RSI_BUY_LEVELS[0] and usd_balance >= ETH_QUOTE_AMOUNT:
+                print(f"Buying {eth_amount:.6f} ETH at {eth_price:.2f}")
+                exchange.create_market_buy_order(eth_symbol, eth_amount)
+
+        except Exception as e:
+            print(f"Error: {e}")
+        
+        time.sleep(3600)  # Wait 1 hour
 
 if __name__ == "__main__":
-    # Start trading bot in a separate thread
-    bot_thread = threading.Thread(target=trading_bot, daemon=True)
-    bot_thread.start()
-    app.run(host="0.0.0.0", port=8080)
+    main()
