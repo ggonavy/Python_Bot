@@ -56,12 +56,13 @@ def init_exchange():
                 'CB-ACCESS-TIMESTAMP': timestamp,
                 'CB-ACCESS-PASSPHRASE': self.password,
                 'Content-Type': 'application/json',
-                'User-Agent': 'ccxt/' + ccxt.__version__
+                'User-Agent': 'ccxt/' + ccxt.__version__,
+                'Accept': 'application/json'
             }
             return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
         exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
-        # Test authentication with public endpoint
-        exchange.fetch_ticker('BTC-USD')
+        exchange.public_get_products()  # Test public API access
+        exchange.fetch_ticker('BTC-USD')  # Test authenticated API access
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
@@ -168,18 +169,18 @@ def trading_bot():
     configs = [
         {
             'symbol': 'BTC/USD',
-            'fiat_limit': 3240,  # Minimum USD for smallest buy
+            'fiat_limit': 2880,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.02622, 42: 0.03496, 37: 0.04370, 32: 0.06992},
-                'sell': {73: 0.02622, 77: 0.03496, 81: 0.04370, 85: 0.06992}
+                'buy': {47: 0.02329, 42: 0.03106, 37: 0.03882, 32: 0.06211},
+                'sell': {73: 0.02329, 77: 0.03106, 81: 0.03882, 85: 0.06211}
             }
         },
         {
             'symbol': 'ETH/USD',
-            'fiat_limit': 360,  # Minimum USD for smallest buy
+            'fiat_limit': 720,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.08000, 42: 0.10667, 37: 0.13333, 32: 0.21333},
-                'sell': {73: 0.08000, 77: 0.10667, 81: 0.13333, 85: 0.21333}
+                'buy': {47: 0.16000, 42: 0.21333, 37: 0.26667, 32: 0.42667},
+                'sell': {73: 0.16000, 77: 0.21333, 81: 0.26667, 85: 0.42667}
             }
         }
     ]
