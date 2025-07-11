@@ -6,6 +6,10 @@ import logging
 from flask import Flask, jsonify
 from ta.momentum import RSIIndicator
 from threading import Thread
+import hmac
+import hashlib
+import base64
+import jwt
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
@@ -37,6 +41,26 @@ def init_exchange():
             'enableRateLimit': True,
             'rateLimit': 100
         })
+        # Override sign method to handle Coinbase JWT
+        def custom_sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
+            request = '/' + path
+            timestamp = str(int(time.time()))
+            message = timestamp + method + request + (body or '')
+            signature = hmac.new(
+                self.encode(self.secret),
+                self.encode(message),
+                hashlib.sha256
+            ).digest()
+            signature_b64 = base64.b64encode(signature).decode()
+            headers = {
+                'CB-ACCESS-KEY': self.apiKey,
+                'CB-ACCESS-SIGN': signature_b64,
+                'CB-ACCESS-TIMESTAMP': timestamp,
+                'CB-ACCESS-PASSPHRASE': self.password,
+                'Content-Type': 'application/json'
+            }
+            return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
+        exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
@@ -45,7 +69,7 @@ def init_exchange():
         raise
 
 # Fetch OHLCV data with retry
-def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100, retries=3, delay=5):
+def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100, retries=5, delay=10):
     try:
         symbol = symbol.replace('/', '-')  # Convert BTC/USD to BTC-USD
         for attempt in range(retries):
@@ -59,13 +83,19 @@ def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100, retries=3, delay=5)
                     return None
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                if df.empty or len(df) < limit:
+                    logger.error(f"Insufficient OHLCV data for {symbol} on attempt {attempt+1}")
+                    if attempt < retries - 1:
+                        time.sleep(delay)
+                        continue
+                    return None
                 logger.info(f"Fetched {len(df)} OHLCV candles for {symbol}")
                 return df
             except Exception as e:
                 logger.error(f"Failed to fetch OHLCV for {symbol} on attempt {attempt+1}: {str(e)}")
                 if attempt < retries - 1:
                     time.sleep(delay)
-                continue
+                    continue
         logger.error(f"Failed to fetch OHLCV for {symbol} after {retries} attempts")
         return None
     except Exception as e:
