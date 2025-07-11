@@ -56,12 +56,13 @@ def init_exchange():
                 'CB-ACCESS-TIMESTAMP': timestamp,
                 'CB-ACCESS-PASSPHRASE': self.password,
                 'Content-Type': 'application/json',
-                'User-Agent': 'ccxt/' + ccxt.__version__
+                'User-Agent': 'ccxt/' + ccxt.__version__,
+                'Accept': 'application/json'
             }
             return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
         exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
         # Test authentication with public endpoint
-        exchange.public_get_products()  # Use public endpoint to validate
+        exchange.publicGetProducts()
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
