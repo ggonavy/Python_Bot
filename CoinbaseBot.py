@@ -27,9 +27,11 @@ try:
         'password': PASSPHRASE,
         'enableRateLimit': True
     })
-    logger.info("Exchange initialized successfully")
+    # Test API connectivity
+    exchange.fetch_ticker('BTC-USD')
+    logger.info("Exchange initialized and API test successful")
 except Exception as e:
-    logger.error(f"Failed to initialize exchange: {e}")
+    logger.error(f"Failed to initialize exchange or test API: {e}")
     sys.exit(1)
 
 # Trading parameters
@@ -98,9 +100,20 @@ def trading_loop():
     logger.info(f"Starting bot at {datetime.now()}")
     while True:
         try:
-            # Fetch OHLCV data
+            # Fetch OHLCV data with retry
             logger.info("Fetching OHLCV data")
-            ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=20)  # Increased limit
+            for attempt in range(3):  # Retry up to 3 times
+                try:
+                    ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=20)
+                    break
+                except Exception as e:
+                    logger.warning(f"OHLCV fetch attempt {attempt + 1} failed: {e}")
+                    if attempt == 2:
+                        logger.error("OHLCV fetch failed after retries")
+                        time.sleep(3600)
+                        continue
+                    time.sleep(5)
+            
             if not ohlcv:
                 logger.error("No OHLCV data returned")
                 time.sleep(3600)
