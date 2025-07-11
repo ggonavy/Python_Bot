@@ -116,18 +116,18 @@ def trading_bot():
     configs = [
         {
             'symbol': 'BTC/USD',
-            'fiat_limit': 15675,  # Minimum USD for smallest buy
+            'fiat_limit': 3420,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.12695, 42: 0.16927, 37: 0.21159, 32: 0.33854},
-                'sell': {73: 0.12695, 77: 0.16927, 81: 0.21159, 85: 0.33854}
+                'buy': {47: 0.02770, 42: 0.03693, 37: 0.04616, 32: 0.07386},
+                'sell': {73: 0.02770, 77: 0.03693, 81: 0.04616, 85: 0.07386}
             }
         },
         {
             'symbol': 'ETH/USD',
-            'fiat_limit': 825,  # Minimum USD for smallest buy
+            'fiat_limit': 180,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.18333, 42: 0.24444, 37: 0.30556, 32: 0.48889},
-                'sell': {73: 0.18333, 77: 0.24444, 81: 0.30556, 85: 0.48889}
+                'buy': {47: 0.04000, 42: 0.05333, 37: 0.06667, 32: 0.10667},
+                'sell': {73: 0.04000, 77: 0.05333, 81: 0.06667, 85: 0.10667}
             }
         }
     ]
