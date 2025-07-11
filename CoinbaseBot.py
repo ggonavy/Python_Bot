@@ -40,7 +40,7 @@ def init_exchange():
         raise
 
 # Fetch OHLCV data
-def fetch_ohlcv(exchange, symbol, timeframe='15m', limit=100):
+def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -116,18 +116,18 @@ def trading_bot():
     configs = [
         {
             'symbol': 'BTC/USD',
-            'fiat_limit': 3060,  # Minimum USD for smallest buy
+            'fiat_limit': 14025,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.02479, 42: 0.03305, 37: 0.04131, 32: 0.06611},
-                'sell': {73: 0.02479, 77: 0.03305, 81: 0.04131, 85: 0.06611}
+                'buy': {47: 0.11363, 42: 0.15151, 37: 0.18939, 32: 0.30297},
+                'sell': {73: 0.11363, 77: 0.15151, 81: 0.18939, 85: 0.30297}
             }
         },
         {
             'symbol': 'ETH/USD',
-            'fiat_limit': 540,  # Minimum USD for smallest buy
+            'fiat_limit': 2475,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.12000, 42: 0.16000, 37: 0.20000, 32: 0.32000},
-                'sell': {73: 0.12000, 77: 0.16000, 81: 0.20000, 85: 0.32000}
+                'buy': {47: 0.55000, 42: 0.73333, 37: 0.91667, 32: 1.46667},
+                'sell': {73: 0.55000, 77: 0.73333, 81: 0.91667, 85: 1.46667}
             }
         }
     ]
@@ -137,11 +137,11 @@ def trading_bot():
             btc_traded = trading_logic(exchange, configs[0]['symbol'], configs[0]['fiat_limit'], configs[0]['rsi_levels'])
             if not btc_traded:
                 trading_logic(exchange, configs[1]['symbol'], configs[1]['fiat_limit'], configs[1]['rsi_levels'])
-            logger.info("Sleeping for 60 seconds")
-            time.sleep(60)
+            logger.info("Sleeping for 30 seconds")
+            time.sleep(30)
         except Exception as e:
             logger.error(f"Main loop error: {str(e)}")
-            time.sleep(60)
+            time.sleep(30)
 
 if __name__ == '__main__':
     # Start trading bot in a separate thread
