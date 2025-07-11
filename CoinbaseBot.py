@@ -2,6 +2,8 @@ import os
 import ccxt
 import logging
 from flask import Flask
+import threading
+import time
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -30,18 +32,24 @@ def custom_sign(self, path, api='public', method='GET', params={}, headers=None,
         'headers': headers
     }
 
+def trading_bot():
+    while True:
+        try:
+            exchange = init_exchange()
+            exchange.load_markets()
+            logger.info("Exchange markets loaded successfully")
+            # Add your trading logic here
+            time.sleep(60)  # Adjust as needed
+        except Exception as e:
+            logger.error(f"Error in trading bot: {str(e)}")
+            time.sleep(10)
+
 @app.route('/health')
 def health():
     return {"status": "healthy"}
 
-@app.route('/test')
-def test_exchange():
-    try:
-        exchange = init_exchange()
-        exchange.load_markets()
-        return {"status": "success"}
-    except Exception as e:
-        return {"error": str(e)}
-
 if __name__ == "__main__":
+    # Start trading bot in a separate thread
+    bot_thread = threading.Thread(target=trading_bot, daemon=True)
+    bot_thread.start()
     app.run(host="0.0.0.0", port=8080)
