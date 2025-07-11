@@ -6,9 +6,6 @@ import logging
 from flask import Flask, jsonify
 from ta.momentum import RSIIndicator
 from threading import Thread
-import hmac
-import hashlib
-import base64
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
@@ -40,29 +37,7 @@ def init_exchange():
             'enableRateLimit': True,
             'rateLimit': 100
         })
-        # Override sign method for Coinbase API authentication
-        def custom_sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
-            request = '/' + path
-            timestamp = str(int(time.time()))
-            message = timestamp + method + request + (body or '')
-            signature = hmac.new(
-                self.secret.encode('utf-8'),
-                message.encode('utf-8'),
-                hashlib.sha256
-            ).hexdigest()
-            headers = {
-                'CB-ACCESS-KEY': self.apiKey,
-                'CB-ACCESS-SIGN': signature,
-                'CB-ACCESS-TIMESTAMP': timestamp,
-                'CB-ACCESS-PASSPHRASE': self.password,
-                'Content-Type': 'application/json',
-                'User-Agent': 'ccxt/' + ccxt.__version__,
-                'Accept': 'application/json'
-            }
-            return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
-        exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
-        # Test authentication with public endpoint
-        exchange.public_get_product_book({'product_id': 'BTC-USD', 'limit': 1})
+        exchange.fetch_ticker('BTC-USD')  # Test API access
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
