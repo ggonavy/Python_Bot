@@ -62,7 +62,7 @@ def init_exchange():
             return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
         exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
         # Test authentication with public endpoint
-        exchange.publicGetProducts()
+        exchange.public_get_product_book({'product_id': 'BTC-USD', 'limit': 1})
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
