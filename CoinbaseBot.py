@@ -59,7 +59,16 @@ def start_server():
     server.serve_forever()
 
 def calculate_rsi(data, periods=14):
-    close_prices = [float(candle[4]) for candle in data]
+    if not data or len(data) < periods + 1:
+        logger.error(f"Insufficient OHLCV data: {len(data)} candles received")
+        return None
+    
+    try:
+        close_prices = [float(candle[4]) for candle in data]
+    except IndexError:
+        logger.error(f"Invalid OHLCV format: {data}")
+        return None
+    
     gains = []
     losses = []
     for i in range(1, len(close_prices)):
@@ -89,7 +98,12 @@ def trading_loop():
             # Fetch OHLCV data
             logger.info("Fetching OHLCV data")
             ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=RSI_PERIOD + 1)
+            logger.info(f"OHLCV data: {ohlcv}")
             rsi = calculate_rsi(ohlcv, RSI_PERIOD)
+            if rsi is None:
+                logger.warning("Skipping trade due to RSI calculation failure")
+                time.sleep(3600)
+                continue
             logger.info(f"RSI: {rsi:.2f}")
 
             # Get current price and balance
