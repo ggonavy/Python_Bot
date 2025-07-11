@@ -21,7 +21,7 @@ app = Flask(__name__)
 def health():
     return jsonify({"status": "healthy"}), 200
 
-# Coinbase Pro API setup
+# Coinbase API setup
 def init_exchange():
     try:
         api_key = os.getenv('COINBASE_API_KEY')
@@ -30,7 +30,7 @@ def init_exchange():
         if not all([api_key, api_secret, passphrase]):
             logger.error("Missing API credentials")
             raise ValueError("API credentials not set")
-        exchange = ccxt.coinbasepro({
+        exchange = ccxt.coinbase({
             'apiKey': api_key,
             'secret': api_secret,
             'password': passphrase,
@@ -38,7 +38,7 @@ def init_exchange():
             'rateLimit': 100
         })
         exchange.load_markets()
-        logger.info("Coinbase Pro exchange initialized")
+        logger.info("Coinbase exchange initialized")
         return exchange
     except Exception as e:
         logger.error(f"Failed to initialize exchange: {str(e)}")
