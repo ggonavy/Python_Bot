@@ -8,7 +8,10 @@ from ta.momentum import RSIIndicator
 from threading import Thread
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
+    logging.FileHandler('coinbase_bot.log'),
+    logging.StreamHandler()
+])
 logger = logging.getLogger(__name__)
 
 # Flask app for Render health checks
@@ -31,8 +34,10 @@ def init_exchange():
             'apiKey': api_key,
             'secret': api_secret,
             'password': passphrase,
-            'enableRateLimit': True
+            'enableRateLimit': True,
+            'rateLimit': 100  # Adjust for Coinbase API limits (~10 req/s)
         })
+        exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
     except Exception as e:
@@ -42,7 +47,11 @@ def init_exchange():
 # Fetch OHLCV data
 def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100):
     try:
+        symbol = symbol.replace('/', '-')  # Convert BTC/USD to BTC-USD
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        if not ohlcv:
+            logger.error(f"No OHLCV data returned for {symbol}")
+            return None
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         logger.info(f"Fetched {len(df)} OHLCV candles for {symbol}")
@@ -91,7 +100,7 @@ def trading_logic(exchange, symbol, fiat_limit, rsi_levels):
             amount_usd = amount * current_price
             if current_rsi <= rsi_level and usd_balance >= amount_usd and usd_balance >= fiat_limit:
                 try:
-                    order = exchange.create_market_buy_order(symbol, amount)
+                    order = exchange.create_market_buy_order(symbol.replace('/', '-'), amount)
                     logger.info(f"Buy {amount:.6f} {base} at {current_price:.2f} (RSI: {current_rsi:.2f})")
                     return True
                 except Exception as e:
@@ -99,7 +108,7 @@ def trading_logic(exchange, symbol, fiat_limit, rsi_levels):
         for rsi_level, amount in rsi_levels['sell'].items():
             if current_rsi >= rsi_level and asset_balance >= amount:
                 try:
-                    order = exchange.create_market_sell_order(symbol, amount)
+                    order = exchange.create_market_sell_order(symbol.replace('/', '-'), amount)
                     logger.info(f"Sell {amount:.6f} {base} at {current_price:.2f} (RSI: {current_rsi:.2f})")
                     return True
                 except Exception as e:
