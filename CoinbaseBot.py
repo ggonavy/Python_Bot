@@ -23,25 +23,35 @@ def health():
 
 # Coinbase API setup
 def init_exchange():
-    try:
-        api_key = os.getenv('COINBASE_API_KEY')
-        api_secret = os.getenv('COINBASE_API_SECRET')
-        if not all([api_key, api_secret]):
-            logger.error("Missing API credentials")
-            raise ValueError("API credentials not set")
-        exchange = ccxt.coinbase({
-            'apiKey': api_key,
-            'secret': api_secret,
-            'enableRateLimit': True,
-            'rateLimit': 100
-        })
-        exchange.fetch_ticker('BTC-USD')  # Test API access
-        exchange.load_markets()
-        logger.info("Coinbase exchange initialized")
-        return exchange
-    except Exception as e:
-        logger.error(f"Failed to initialize exchange: {str(e)}")
-        raise
+    retries = 3
+    delay = 5
+    for attempt in range(retries):
+        try:
+            api_key = os.getenv('COINBASE_API_KEY')
+            api_secret = os.getenv('COINBASE_API_SECRET')
+            if not all([api_key, api_secret]):
+                logger.error("Missing API credentials")
+                raise ValueError("API credentials not set")
+            if not api_key.startswith('organizations/'):
+                logger.error("Invalid API key format: must start with 'organizations/'")
+                raise ValueError("Invalid API key format")
+            exchange = ccxt.coinbase({
+                'apiKey': api_key,
+                'secret': api_secret,
+                'enableRateLimit': True,
+                'rateLimit': 100
+            })
+            exchange.fetch_ticker('BTC-USD')  # Test API access
+            exchange.load_markets()
+            logger.info("Coinbase exchange initialized")
+            return exchange
+        except Exception as e:
+            logger.error(f"Failed to initialize exchange on attempt {attempt+1}: {str(e)}")
+            if attempt < retries - 1:
+                time.sleep(delay)
+            continue
+    logger.error(f"Failed to initialize exchange after {retries} attempts")
+    raise Exception("Exchange initialization failed")
 
 # Fetch OHLCV data with retry
 def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100, retries=5, delay=10):
