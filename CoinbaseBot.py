@@ -5,6 +5,8 @@ import hmac
 import hashlib
 import base64
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
 # Environment variables
 API_KEY = os.getenv('COINBASE_API_KEY')
@@ -28,6 +30,17 @@ RSI_SELL_LEVELS = [73, 77, 81, 85]
 POSITION_SIZES = [0.15, 0.20, 0.25, 0.40]  # % of quote amount
 TIMEFRAME = '1h'
 RSI_PERIOD = 14
+
+# Dummy HTTP server to satisfy Render
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'Bot is running')
+
+def start_server():
+    server = HTTPServer(('0.0.0.0', int(os.getenv('PORT', 8000))), SimpleHTTPRequestHandler)
+    server.serve_forever()
 
 def calculate_rsi(data, periods=14):
     close_prices = [float(candle[4]) for candle in data]
@@ -53,7 +66,7 @@ def calculate_rsi(data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def main():
+def trading_loop():
     print(f"Starting bot at {datetime.now()}")
     while True:
         try:
@@ -79,7 +92,7 @@ def main():
                     print(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
                     exchange.create_market_sell_order(SYMBOL, trade_amount)
 
-            # ETH allocation (simplified)
+            # ETH allocation
             eth_symbol = 'ETH-USD'
             eth_ticker = exchange.fetch_ticker(eth_symbol)
             eth_price = eth_ticker['last']
@@ -92,6 +105,15 @@ def main():
             print(f"Error: {e}")
         
         time.sleep(3600)  # Wait 1 hour
+
+def main():
+    # Start HTTP server in a separate thread
+    server_thread = threading.Thread(target=start_server)
+    server_thread.daemon = True
+    server_thread.start()
+    
+    # Run trading loop
+    trading_loop()
 
 if __name__ == "__main__":
     main()
