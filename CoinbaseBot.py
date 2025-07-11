@@ -40,13 +40,13 @@ def init_exchange():
             'enableRateLimit': True,
             'rateLimit': 100
         })
-        # Simplified signing method
+        # Override sign method for Coinbase API authentication
         def custom_sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
             request = '/' + path
             timestamp = str(int(time.time()))
             message = timestamp + method + request + (body or '')
             signature = hmac.new(
-                base64.b64decode(self.secret),
+                self.secret.encode('utf-8'),
                 message.encode('utf-8'),
                 hashlib.sha256
             ).hexdigest()
@@ -55,11 +55,13 @@ def init_exchange():
                 'CB-ACCESS-SIGN': signature,
                 'CB-ACCESS-TIMESTAMP': timestamp,
                 'CB-ACCESS-PASSPHRASE': self.password,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'User-Agent': 'ccxt/' + ccxt.__version__
             }
             return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
         exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
-        exchange.fetch_ticker('BTC-USD')  # Test API access
+        # Test authentication with public endpoint
+        exchange.fetch_ticker('BTC-USD')
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
