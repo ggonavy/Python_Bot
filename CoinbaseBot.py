@@ -64,9 +64,12 @@ def calculate_rsi(data, periods=14):
         return None
     
     try:
-        close_prices = [float(candle[4]) for candle in data]
-    except IndexError:
-        logger.error(f"Invalid OHLCV format: {data}")
+        close_prices = [float(candle[4]) for candle in data if len(candle) >= 5]
+        if len(close_prices) < periods + 1:
+            logger.error(f"Not enough valid candles: {len(close_prices)}")
+            return None
+    except (IndexError, TypeError) as e:
+        logger.error(f"Invalid OHLCV format: {data[:2]}... {e}")
         return None
     
     gains = []
@@ -97,8 +100,13 @@ def trading_loop():
         try:
             # Fetch OHLCV data
             logger.info("Fetching OHLCV data")
-            ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=RSI_PERIOD + 1)
-            logger.info(f"OHLCV data: {ohlcv}")
+            ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=20)  # Increased limit
+            if not ohlcv:
+                logger.error("No OHLCV data returned")
+                time.sleep(3600)
+                continue
+            logger.info(f"OHLCV data (first 2): {ohlcv[:2]}")
+            
             rsi = calculate_rsi(ohlcv, RSI_PERIOD)
             if rsi is None:
                 logger.warning("Skipping trade due to RSI calculation failure")
