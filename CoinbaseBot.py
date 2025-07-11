@@ -26,14 +26,12 @@ def init_exchange():
     try:
         api_key = os.getenv('COINBASE_API_KEY')
         api_secret = os.getenv('COINBASE_API_SECRET')
-        passphrase = os.getenv('COINBASE_PASSPHRASE')
-        if not all([api_key, api_secret, passphrase]):
+        if not all([api_key, api_secret]):
             logger.error("Missing API credentials")
             raise ValueError("API credentials not set")
         exchange = ccxt.coinbase({
             'apiKey': api_key,
             'secret': api_secret,
-            'password': passphrase,
             'enableRateLimit': True,
             'rateLimit': 100
         })
