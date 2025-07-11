@@ -6,6 +6,9 @@ import logging
 from flask import Flask, jsonify
 from ta.momentum import RSIIndicator
 from threading import Thread
+import hmac
+import hashlib
+import base64
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
@@ -21,22 +24,40 @@ app = Flask(__name__)
 def health():
     return jsonify({"status": "healthy"}), 200
 
-# Coinbase API setup
+# Coinbase Advanced API setup
 def init_exchange():
     try:
         api_key = os.getenv('COINBASE_API_KEY')
         api_secret = os.getenv('COINBASE_API_SECRET')
-        passphrase = os.getenv('COINBASE_PASSPHRASE')
-        if not all([api_key, api_secret, passphrase]):
+        if not all([api_key, api_secret]):
             logger.error("Missing API credentials")
             raise ValueError("API credentials not set")
         exchange = ccxt.coinbase({
             'apiKey': api_key,
             'secret': api_secret,
-            'password': passphrase,
             'enableRateLimit': True,
             'rateLimit': 100
         })
+        # Override sign method for Coinbase Advanced API
+        def custom_sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
+            request = '/' + path
+            timestamp = str(int(time.time()))
+            message = timestamp + method + request + (body or '')
+            signature = hmac.new(
+                self.secret.encode('utf-8'),
+                message.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            headers = {
+                'CB-ACCESS-KEY': self.apiKey,
+                'CB-ACCESS-SIGN': signature,
+                'CB-ACCESS-TIMESTAMP': timestamp,
+                'Content-Type': 'application/json',
+                'User-Agent': 'ccxt/' + ccxt.__version__,
+                'Accept': 'application/json'
+            }
+            return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
+        exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
