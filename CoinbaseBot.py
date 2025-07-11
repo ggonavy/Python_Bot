@@ -8,6 +8,11 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import sys
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
+logger = logging.getLogger(__name__)
 
 # Environment variables
 API_KEY = os.getenv('COINBASE_API_KEY')
@@ -15,12 +20,17 @@ API_SECRET = os.getenv('COINBASE_API_SECRET')
 PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
 
 # Initialize exchange
-exchange = ccxt.coinbase({
-    'apiKey': API_KEY,
-    'secret': API_SECRET,
-    'password': PASSPHRASE,
-    'enableRateLimit': True
-})
+try:
+    exchange = ccxt.coinbase({
+        'apiKey': API_KEY,
+        'secret': API_SECRET,
+        'password': PASSPHRASE,
+        'enableRateLimit': True
+    })
+    logger.info("Exchange initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize exchange: {e}")
+    sys.exit(1)
 
 # Trading parameters
 SYMBOL = 'BTC-USD'
@@ -45,6 +55,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
 def start_server():
     server = HTTPServer(('0.0.0.0', int(os.getenv('PORT', 8000))), SimpleHTTPRequestHandler)
+    logger.info("Starting HTTP server")
     server.serve_forever()
 
 def calculate_rsi(data, periods=14):
@@ -72,29 +83,32 @@ def calculate_rsi(data, periods=14):
     return rsi
 
 def trading_loop():
-    print(f"Starting bot at {datetime.now()}", flush=True)
+    logger.info(f"Starting bot at {datetime.now()}")
     while True:
         try:
             # Fetch OHLCV data
+            logger.info("Fetching OHLCV data")
             ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=RSI_PERIOD + 1)
             rsi = calculate_rsi(ohlcv, RSI_PERIOD)
-            print(f"RSI: {rsi:.2f}", flush=True)
+            logger.info(f"RSI: {rsi:.2f}")
 
             # Get current price and balance
+            logger.info("Fetching ticker and balance")
             ticker = exchange.fetch_ticker(SYMBOL)
             price = ticker['last']
             balance = exchange.fetch_balance()
             usd_balance = balance['USD']['free']
             btc_balance = balance['BTC']['free']
+            logger.info(f"Price: {price:.2f}, USD: {usd_balance:.2f}, BTC: {btc_balance:.6f}")
 
             # Trading logic
             for i, (buy_level, sell_level, size) in enumerate(zip(RSI_BUY_LEVELS, RSI_SELL_LEVELS, POSITION_SIZES)):
                 trade_amount = QUOTE_AMOUNT * size / price
                 if rsi <= buy_level and usd_balance >= QUOTE_AMOUNT * size:
-                    print(f"Buying {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})", flush=True)
+                    logger.info(f"Buying {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
                     exchange.create_market_buy_order(SYMBOL, trade_amount)
                 elif rsi >= sell_level and btc_balance >= trade_amount:
-                    print(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})", flush=True)
+                    logger.info(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
                     exchange.create_market_sell_order(SYMBOL, trade_amount)
 
             # ETH allocation
@@ -103,11 +117,11 @@ def trading_loop():
             eth_price = eth_ticker['last']
             eth_amount = ETH_QUOTE_AMOUNT / eth_price
             if rsi <= RSI_BUY_LEVELS[0] and usd_balance >= ETH_QUOTE_AMOUNT:
-                print(f"Buying {eth_amount:.6f} ETH at {eth_price:.2f}", flush=True)
+                logger.info(f"Buying {eth_amount:.6f} ETH at {eth_price:.2f}")
                 exchange.create_market_buy_order(eth_symbol, eth_amount)
 
         except Exception as e:
-            print(f"Error: {e}", flush=True)
+            logger.error(f"Error in trading loop: {e}")
         
         time.sleep(3600)  # Wait 1 hour
 
