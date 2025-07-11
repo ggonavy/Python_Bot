@@ -35,7 +35,7 @@ def init_exchange():
             'secret': api_secret,
             'password': passphrase,
             'enableRateLimit': True,
-            'rateLimit': 100  # Adjust for Coinbase API limits (~10 req/s)
+            'rateLimit': 100
         })
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
@@ -44,18 +44,30 @@ def init_exchange():
         logger.error(f"Failed to initialize exchange: {str(e)}")
         raise
 
-# Fetch OHLCV data
-def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100):
+# Fetch OHLCV data with retry
+def fetch_ohlcv(exchange, symbol, timeframe='5m', limit=100, retries=3, delay=5):
     try:
         symbol = symbol.replace('/', '-')  # Convert BTC/USD to BTC-USD
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        if not ohlcv:
-            logger.error(f"No OHLCV data returned for {symbol}")
-            return None
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        logger.info(f"Fetched {len(df)} OHLCV candles for {symbol}")
-        return df
+        for attempt in range(retries):
+            try:
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                if not ohlcv:
+                    logger.error(f"No OHLCV data returned for {symbol} on attempt {attempt+1}")
+                    if attempt < retries - 1:
+                        time.sleep(delay)
+                        continue
+                    return None
+                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                logger.info(f"Fetched {len(df)} OHLCV candles for {symbol}")
+                return df
+            except Exception as e:
+                logger.error(f"Failed to fetch OHLCV for {symbol} on attempt {attempt+1}: {str(e)}")
+                if attempt < retries - 1:
+                    time.sleep(delay)
+                continue
+        logger.error(f"Failed to fetch OHLCV for {symbol} after {retries} attempts")
+        return None
     except Exception as e:
         logger.error(f"Failed to fetch OHLCV for {symbol}: {str(e)}")
         return None
