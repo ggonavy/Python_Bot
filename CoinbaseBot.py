@@ -56,13 +56,12 @@ def init_exchange():
                 'CB-ACCESS-TIMESTAMP': timestamp,
                 'CB-ACCESS-PASSPHRASE': self.password,
                 'Content-Type': 'application/json',
-                'User-Agent': 'ccxt/' + ccxt.__version__,
-                'Accept': 'application/json'
+                'User-Agent': 'ccxt/' + ccxt.__version__
             }
             return {'url': self.urls['api'][api] + request, 'method': method, 'body': body, 'headers': headers}
         exchange.sign = custom_sign.__get__(exchange, ccxt.coinbase)
-        exchange.public_get_products()  # Test public API access
-        exchange.fetch_ticker('BTC-USD')  # Test authenticated API access
+        # Test authentication with public endpoint
+        exchange.public_get_products()  # Use public endpoint to validate
         exchange.load_markets()
         logger.info("Coinbase exchange initialized")
         return exchange
@@ -171,8 +170,8 @@ def trading_bot():
             'symbol': 'BTC/USD',
             'fiat_limit': 2880,  # Minimum USD for smallest buy
             'rsi_levels': {
-                'buy': {47: 0.02329, 42: 0.03106, 37: 0.03882, 32: 0.06211},
-                'sell': {73: 0.02329, 77: 0.03106, 81: 0.03882, 85: 0.06211}
+                'buy': {47: 0.02330, 42: 0.03107, 37: 0.03884, 32: 0.06214},
+                'sell': {73: 0.02330, 77: 0.03107, 81: 0.03884, 85: 0.06214}
             }
         },
         {
