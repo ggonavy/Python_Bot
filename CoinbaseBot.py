@@ -7,6 +7,7 @@ import base64
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
+import sys
 
 # Environment variables
 API_KEY = os.getenv('COINBASE_API_KEY')
@@ -31,12 +32,16 @@ POSITION_SIZES = [0.15, 0.20, 0.25, 0.40]  # % of quote amount
 TIMEFRAME = '1h'
 RSI_PERIOD = 14
 
-# Dummy HTTP server to satisfy Render
+# HTTP server to satisfy Render
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'Bot is running')
+    
+    def do_HEAD(self):  # Handle HEAD requests
+        self.send_response(200)
+        self.end_headers()
 
 def start_server():
     server = HTTPServer(('0.0.0.0', int(os.getenv('PORT', 8000))), SimpleHTTPRequestHandler)
@@ -67,13 +72,13 @@ def calculate_rsi(data, periods=14):
     return rsi
 
 def trading_loop():
-    print(f"Starting bot at {datetime.now()}")
+    print(f"Starting bot at {datetime.now()}", flush=True)
     while True:
         try:
             # Fetch OHLCV data
             ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=RSI_PERIOD + 1)
             rsi = calculate_rsi(ohlcv, RSI_PERIOD)
-            print(f"RSI: {rsi:.2f}")
+            print(f"RSI: {rsi:.2f}", flush=True)
 
             # Get current price and balance
             ticker = exchange.fetch_ticker(SYMBOL)
@@ -86,10 +91,10 @@ def trading_loop():
             for i, (buy_level, sell_level, size) in enumerate(zip(RSI_BUY_LEVELS, RSI_SELL_LEVELS, POSITION_SIZES)):
                 trade_amount = QUOTE_AMOUNT * size / price
                 if rsi <= buy_level and usd_balance >= QUOTE_AMOUNT * size:
-                    print(f"Buying {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
+                    print(f"Buying {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})", flush=True)
                     exchange.create_market_buy_order(SYMBOL, trade_amount)
                 elif rsi >= sell_level and btc_balance >= trade_amount:
-                    print(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
+                    print(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})", flush=True)
                     exchange.create_market_sell_order(SYMBOL, trade_amount)
 
             # ETH allocation
@@ -98,11 +103,11 @@ def trading_loop():
             eth_price = eth_ticker['last']
             eth_amount = ETH_QUOTE_AMOUNT / eth_price
             if rsi <= RSI_BUY_LEVELS[0] and usd_balance >= ETH_QUOTE_AMOUNT:
-                print(f"Buying {eth_amount:.6f} ETH at {eth_price:.2f}")
+                print(f"Buying {eth_amount:.6f} ETH at {eth_price:.2f}", flush=True)
                 exchange.create_market_buy_order(eth_symbol, eth_amount)
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error: {e}", flush=True)
         
         time.sleep(3600)  # Wait 1 hour
 
