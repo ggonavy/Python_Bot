@@ -20,19 +20,28 @@ API_SECRET = os.getenv('COINBASE_API_SECRET')
 PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
 
 # Initialize exchange
-try:
-    exchange = ccxt.coinbase({
-        'apiKey': API_KEY,
-        'secret': API_SECRET,
-        'password': PASSPHRASE,
-        'enableRateLimit': True
-    })
-    # Test API connectivity
-    exchange.fetch_ticker('BTC-USD')
-    logger.info("Exchange initialized and API test successful")
-except Exception as e:
-    logger.error(f"Failed to initialize exchange or test API: {e}")
-    sys.exit(1)
+def initialize_exchange():
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            exchange = ccxt.coinbase({
+                'apiKey': API_KEY,
+                'secret': API_SECRET,
+                'password': PASSPHRASE,
+                'enableRateLimit': True
+            })
+            # Test API with fetch_markets
+            markets = exchange.fetch_markets()
+            logger.info(f"API test successful, fetched {len(markets)} markets")
+            return exchange
+        except Exception as e:
+            logger.error(f"Exchange init attempt {attempt + 1} failed: {e}")
+            if attempt == 2:
+                logger.error("Exchange initialization failed after retries")
+                sys.exit(1)
+            time.sleep(5)
+    return None
+
+exchange = initialize_exchange()
 
 # Trading parameters
 SYMBOL = 'BTC-USD'
