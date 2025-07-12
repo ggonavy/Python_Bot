@@ -1,182 +1,87 @@
-import ccxt
 import time
-import os
-import hmac
-import hashlib
-import base64
+import requests
+import pandas as pd
+from ta.momentum import RSIIndicator
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
-import sys
-import logging
+from pytz import timezone
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger(__name__)
+# === CONFIG ===
+SYMBOL = "BTC-USD"
+TIMEFRAME_MINUTES = 60  # 1-hour RSI
+TIMEZONE = 'US/Eastern'
 
-# Environment variables
-API_KEY = os.getenv('COINBASE_API_KEY')
-API_SECRET = os.getenv('COINBASE_API_SECRET')
-PASSPHRASE = os.getenv('COINBASE_PASSPHRASE')
+# === STRATEGY ===
+BUY_LADDER = [(47, 0.10), (42, 0.20), (37, 0.30), (32, 1.00)]
+RSI_PANIC_BUY = 27
+RSI_FULL_SELL = 73
+last_buy_rsi = 100
 
-# Initialize exchange
-def initialize_exchange():
-    for attempt in range(3):  # Retry up to 3 times
-        try:
-            exchange = ccxt.coinbase({
-                'apiKey': API_KEY,
-                'secret': API_SECRET,
-                'password': PASSPHRASE,
-                'enableRateLimit': True
-            })
-            # Test API with fetch_markets
-            markets = exchange.fetch_markets()
-            logger.info(f"API test successful, fetched {len(markets)} markets")
-            return exchange
-        except Exception as e:
-            logger.error(f"Exchange init attempt {attempt + 1} failed: {e}")
-            if attempt == 2:
-                logger.error("Exchange initialization failed after retries")
-                sys.exit(1)
-            time.sleep(5)
-    return None
+# === API PLACEHOLDERS (replace with real Coinbase code) ===
+def get_account_balance():
+    return {"usd": 10000, "btc": 0.25}  # Replace with actual API call
 
-exchange = initialize_exchange()
+def execute_market_buy(amount_usd):
+    print(f"[BUY] Buying ${amount_usd:.2f} BTC")
 
-# Trading parameters
-SYMBOL = 'BTC-USD'
-QUOTE_AMOUNT = 0.1675 * 0.8  # 80% of 0.1675 BTC
-ETH_QUOTE_AMOUNT = 0.1675 * 0.2  # 20% in ETH
-RSI_BUY_LEVELS = [47, 42, 37, 32]
-RSI_SELL_LEVELS = [73, 77, 81, 85]
-POSITION_SIZES = [0.15, 0.20, 0.25, 0.40]  # % of quote amount
-TIMEFRAME = '1h'
-RSI_PERIOD = 14
+def execute_market_sell(amount_btc):
+    print(f"[SELL] Selling {amount_btc:.6f} BTC")
 
-# HTTP server to satisfy Render
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'Bot is running')
-    
-    def do_HEAD(self):  # Handle HEAD requests
-        self.send_response(200)
-        self.end_headers()
-
-def start_server():
-    server = HTTPServer(('0.0.0.0', int(os.getenv('PORT', 8000))), SimpleHTTPRequestHandler)
-    logger.info("Starting HTTP server")
-    server.serve_forever()
-
-def calculate_rsi(data, periods=14):
-    if not data or len(data) < periods + 1:
-        logger.error(f"Insufficient OHLCV data: {len(data)} candles received")
-        return None
-    
+def fetch_ohlcv():
+    url = f"https://api.pro.coinbase.com/products/{SYMBOL}/candles?granularity={TIMEFRAME_MINUTES * 60}"
     try:
-        close_prices = [float(candle[4]) for candle in data if len(candle) >= 5]
-        if len(close_prices) < periods + 1:
-            logger.error(f"Not enough valid candles: {len(close_prices)}")
-            return None
-    except (IndexError, TypeError) as e:
-        logger.error(f"Invalid OHLCV format: {data[:2]}... {e}")
-        return None
-    
-    gains = []
-    losses = []
-    for i in range(1, len(close_prices)):
-        diff = close_prices[i] - close_prices[i-1]
-        if diff >= 0:
-            gains.append(diff)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(diff))
-    
-    avg_gain = sum(gains[:periods]) / periods
-    avg_loss = sum(losses[:periods]) / periods
-    
-    for i in range(periods, len(gains)):
-        avg_gain = (avg_gain * (periods - 1) + gains[i]) / periods
-        avg_loss = (avg_loss * (periods - 1) + losses[i]) / periods
-    
-    rs = avg_gain / avg_loss if avg_loss != 0 else float('inf')
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+        response = requests.get(url)
+        data = response.json()
+        df = pd.DataFrame(data, columns=["time", "low", "high", "open", "close", "volume"])
+        df = df.sort_values("time")
+        df["rsi"] = RSIIndicator(close=df["close"]).rsi()
+        return df
+    except Exception as e:
+        print("Error fetching candles:", e)
+        return pd.DataFrame()
 
-def trading_loop():
-    logger.info(f"Starting bot at {datetime.now()}")
-    while True:
-        try:
-            # Fetch OHLCV data with retry
-            logger.info("Fetching OHLCV data")
-            for attempt in range(3):  # Retry up to 3 times
-                try:
-                    ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=20)
-                    break
-                except Exception as e:
-                    logger.warning(f"OHLCV fetch attempt {attempt + 1} failed: {e}")
-                    if attempt == 2:
-                        logger.error("OHLCV fetch failed after retries")
-                        time.sleep(3600)
-                        continue
-                    time.sleep(5)
-            
-            if not ohlcv:
-                logger.error("No OHLCV data returned")
-                time.sleep(3600)
-                continue
-            logger.info(f"OHLCV data (first 2): {ohlcv[:2]}")
-            
-            rsi = calculate_rsi(ohlcv, RSI_PERIOD)
-            if rsi is None:
-                logger.warning("Skipping trade due to RSI calculation failure")
-                time.sleep(3600)
-                continue
-            logger.info(f"RSI: {rsi:.2f}")
+# === MAIN LOGIC ===
+def check_and_trade():
+    global last_buy_rsi
+    df = fetch_ohlcv()
+    if df.empty or df["rsi"].isna().all():
+        print("No RSI data.")
+        return
 
-            # Get current price and balance
-            logger.info("Fetching ticker and balance")
-            ticker = exchange.fetch_ticker(SYMBOL)
-            price = ticker['last']
-            balance = exchange.fetch_balance()
-            usd_balance = balance['USD']['free']
-            btc_balance = balance['BTC']['free']
-            logger.info(f"Price: {price:.2f}, USD: {usd_balance:.2f}, BTC: {btc_balance:.6f}")
+    latest_rsi = df["rsi"].iloc[-1]
+    now = datetime.now(timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{now}] RSI: {latest_rsi:.2f}")
 
-            # Trading logic
-            for i, (buy_level, sell_level, size) in enumerate(zip(RSI_BUY_LEVELS, RSI_SELL_LEVELS, POSITION_SIZES)):
-                trade_amount = QUOTE_AMOUNT * size / price
-                if rsi <= buy_level and usd_balance >= QUOTE_AMOUNT * size:
-                    logger.info(f"Buying {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
-                    exchange.create_market_buy_order(SYMBOL, trade_amount)
-                elif rsi >= sell_level and btc_balance >= trade_amount:
-                    logger.info(f"Selling {trade_amount:.6f} BTC at {price:.2f} (RSI: {rsi:.2f})")
-                    exchange.create_market_sell_order(SYMBOL, trade_amount)
+    balances = get_account_balance()
+    fiat = balances["usd"]
+    btc = balances["btc"]
 
-            # ETH allocation
-            eth_symbol = 'ETH-USD'
-            eth_ticker = exchange.fetch_ticker(eth_symbol)
-            eth_price = eth_ticker['last']
-            eth_amount = ETH_QUOTE_AMOUNT / eth_price
-            if rsi <= RSI_BUY_LEVELS[0] and usd_balance >= ETH_QUOTE_AMOUNT:
-                logger.info(f"Buying {eth_amount:.6f} ETH at {eth_price:.2f}")
-                exchange.create_market_buy_order(eth_symbol, eth_amount)
+    # === SELL ALL BTC IF RSI ≥ 73 ===
+    if latest_rsi >= RSI_FULL_SELL and btc > 0.00001:
+        print(f"🚨 RSI {latest_rsi:.2f} ≥ {RSI_FULL_SELL} → SELLING ALL BTC")
+        execute_market_sell(btc)
+        return
 
-        except Exception as e:
-            logger.error(f"Error in trading loop: {e}")
-        
-        time.sleep(3600)  # Wait 1 hour
+    # === PANIC BUY ZONE RSI ≤ 27 ===
+    if latest_rsi <= RSI_PANIC_BUY and fiat > 5:
+        print(f"⚠️ RSI {latest_rsi:.2f} ≤ {RSI_PANIC_BUY} → PANIC BUY ALL-IN")
+        execute_market_buy(fiat)
+        return
 
-def main():
-    # Start HTTP server in a separate thread
-    server_thread = threading.Thread(target=start_server)
-    server_thread.daemon = True
-    server_thread.start()
-    
-    # Run trading loop
-    trading_loop()
+    # === LADDERED BUYS ===
+    for rsi_level, percent in BUY_LADDER:
+        if latest_rsi <= rsi_level and last_buy_rsi > rsi_level:
+            buy_amount = fiat * percent
+            if buy_amount > 5:
+                print(f"✅ BUY TRIGGERED | RSI: {latest_rsi:.2f} ≤ {rsi_level} → Buying ${buy_amount:.2f}")
+                execute_market_buy(buy_amount)
+                last_buy_rsi = latest_rsi
+            return
 
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            check_and_trade()
+            time.sleep(1)  # Check every second
+        except Exception as e:
+            print("Runtime error:", e)
+            time.sleep(5)
