@@ -1,3 +1,3 @@
-Slate Bot
+# SlateBot Binance
 
-A trading bot for Kraken API, using RSI, MACD, and EMA indicators to trade BTC/USD with ETH hedging.
+Automated BTC dip-trading bot running on Binance Spot using Render Web Service.
