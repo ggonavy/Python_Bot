@@ -4,7 +4,7 @@ services:
     env: python
     plan: standard
     buildCommand: pip install -r requirements.txt
-    startCommand: python CoinbaseBot.py
+    startCommand: python SlateBot_Binance.py
     repo: https://github.com/ggonavy/Python_Bot
     runtime: python-3.10.12
     envVars:
