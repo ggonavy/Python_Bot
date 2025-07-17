@@ -1,8 +1,7 @@
-# SlateBot_Binance_v2.py
-# Version 2: Dynamic High, Logging, Fee Handling
+# SlateBot_Binance_v2_FINAL.py
+# FINAL Version: Matches full confirmed strategy with fixed profit targets
 
 import time
-import math
 import os
 import json
 from datetime import datetime
@@ -12,17 +11,16 @@ from binance.enums import *
 # === CONFIGURATION ===
 CHECK_INTERVAL = 15  # seconds
 PAIR = 'BTCUSDT'
-DECIMALS = 6  # Binance precision
-TRADE_FEE_PCT = 0.001  # 0.1% fee per trade
+DECIMALS = 6
+TRADE_FEE_PCT = 0.001  # 0.1% per trade
 
-# === Ladder Config ===
+# === Buy Ladder and Fixed Sell Prices ===
 BUY_LADDER = [
-    {"drop_pct": 2.5, "amount_pct": 0.25, "sell_trigger_pct": 2.5},
-    {"drop_pct": 3.5, "amount_pct": 0.35, "sell_trigger_pct": 3.5},
-    {"drop_pct": 4.5, "amount_pct": 0.40, "sell_trigger_pct": 4.5},
+    {"drop_pct": 2.5, "amount_pct": 0.25, "sell_price": 102500.0},
+    {"drop_pct": 3.5, "amount_pct": 0.35, "sell_price": 103500.0},
+    {"drop_pct": 4.5, "amount_pct": 0.40, "sell_price": 104500.0},
 ]
 
-# === Environment Vars for API ===
 API_KEY = os.getenv("BINANCE_API_KEY")
 API_SECRET = os.getenv("BINANCE_API_SECRET")
 client = Client(API_KEY, API_SECRET)
@@ -34,7 +32,7 @@ INITIAL_FIAT = 25000.0
 available_fiat = INITIAL_FIAT
 LOG_FILE = "slatebot_trade_log.json"
 
-# === Load existing log (if exists) ===
+# === Load existing state ===
 def load_log():
     global high_price, buys, available_fiat
     try:
@@ -46,7 +44,7 @@ def load_log():
     except FileNotFoundError:
         pass
 
-# === Save log ===
+# === Save current state ===
 def save_log():
     with open(LOG_FILE, 'w') as f:
         json.dump({
@@ -55,42 +53,42 @@ def save_log():
             "available_fiat": available_fiat
         }, f, indent=2)
 
-# === Get current BTC price ===
+# === Get BTC price ===
 def get_price():
     ticker = client.get_symbol_ticker(symbol=PAIR)
     return float(ticker['price'])
 
-# === Execute market buy ===
+# === Market Buy ===
 def execute_buy(usdt_amount):
     price = get_price()
     qty = round((usdt_amount * (1 - TRADE_FEE_PCT)) / price, DECIMALS)
-    # client.order_market_buy(symbol=PAIR, quantity=qty)  # Uncomment to go live
+    # client.order_market_buy(symbol=PAIR, quantity=qty)
     return price, qty
 
-# === Execute market sell ===
+# === Market Sell ===
 def execute_sell(btc_amount):
     price = get_price()
     qty = round(btc_amount * (1 - TRADE_FEE_PCT), DECIMALS)
-    # client.order_market_sell(symbol=PAIR, quantity=qty)  # Uncomment to go live
+    # client.order_market_sell(symbol=PAIR, quantity=qty)
     return price, qty
 
-# === Main Bot Loop ===
+# === Main Loop ===
 load_log()
-print("SlateBot v2 running...")
+print("[SlateBot v2] Running final strategy...")
 
 while True:
     try:
         price = get_price()
 
-        # Update dynamic high
+        # Update high
         if not buys or price > high_price:
             high_price = price
 
-        # Buy Logic
+        # Buy checks
         for i, ladder in enumerate(BUY_LADDER):
-            target = high_price * (1 - ladder['drop_pct'] / 100)
+            target_price = high_price * (1 - ladder['drop_pct'] / 100)
             already_bought = any(b['level'] == i for b in buys)
-            if price <= target and not already_bought:
+            if price <= target_price and not already_bought:
                 fiat_to_use = INITIAL_FIAT * ladder['amount_pct']
                 if available_fiat >= fiat_to_use:
                     buy_price, qty = execute_buy(fiat_to_use)
@@ -98,24 +96,24 @@ while True:
                         "level": i,
                         "buy_price": buy_price,
                         "btc": qty,
-                        "sell_price": high_price * (1 + ladder['sell_trigger_pct'] / 100),
+                        "sell_price": ladder['sell_price'],
                         "timestamp": str(datetime.utcnow())
                     })
                     available_fiat -= fiat_to_use
-                    print(f"[BUY] Level {i} - {qty} BTC at ${buy_price:.2f}")
+                    print(f"[BUY] Level {i}: {qty} BTC at ${buy_price:.2f}")
 
-        # Sell Logic
+        # Sell checks
         for b in buys[:]:
             if price >= b['sell_price']:
-                sell_price, sold_qty = execute_sell(b['btc'])
-                profit = (sell_price - b['buy_price']) * b['btc'] * (1 - TRADE_FEE_PCT)
-                available_fiat += sold_qty * sell_price
-                print(f"[SELL] Sold {sold_qty} BTC at ${sell_price:.2f}, Profit: ${profit:.2f}")
+                sell_price, qty_sold = execute_sell(b['btc'])
+                profit = (sell_price - b['buy_price']) * qty_sold * (1 - TRADE_FEE_PCT)
+                available_fiat += qty_sold * sell_price
+                print(f"[SELL] Sold {qty_sold} BTC at ${sell_price:.2f}, Profit: ${profit:.2f}")
                 buys.remove(b)
 
-        # Reset Cycle
+        # Reset high when all BTC sold
         if not buys:
-            print("[CYCLE RESET] All positions closed. Resetting high.")
+            print("[CYCLE RESET] All positions closed. High reset.")
             high_price = price
             available_fiat = INITIAL_FIAT
 
